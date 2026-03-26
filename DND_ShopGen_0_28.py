@@ -1,7 +1,3 @@
-"""
-D&D Shop Generator — DND_ShopGen_0v22.py
-"""
-
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 import csv
@@ -1078,22 +1074,25 @@ class ShopApp(tk.Tk):
         nb = ttk.Notebook(self)
         nb.pack(fill="both", expand=True, padx=8, pady=(4, 8))
 
-        self.tab_action   = ttk.Frame(nb)
-        self.tab_settings = ttk.Frame(nb)
-        self.tab_sell     = ttk.Frame(nb)
-        self.tab_save     = ttk.Frame(nb)
-        self.tab_gallery  = ttk.Frame(nb)
-        nb.add(self.tab_action,   text="  ⚡ Action  ")
-        nb.add(self.tab_settings, text="  ⚙ Stock Settings  ")
-        nb.add(self.tab_sell,     text="  ◈ Sell Item  ")
-        nb.add(self.tab_save,     text="  ◆ Campaigns & Saves  ")
-        nb.add(self.tab_gallery,  text="  ◉ Item Gallery  ")
+        self.tab_action      = ttk.Frame(nb)
+        self.tab_settings    = ttk.Frame(nb)
+        self.tab_sell        = ttk.Frame(nb)
+        self.tab_save        = ttk.Frame(nb)
+        self.tab_gallery     = ttk.Frame(nb)
+        self.tab_shopkeeper  = ttk.Frame(nb)
+        nb.add(self.tab_action,      text="  ⚡ Action  ")
+        nb.add(self.tab_settings,    text="  ⚙ Stock Settings  ")
+        nb.add(self.tab_sell,        text="  ◈ Sell Item  ")
+        nb.add(self.tab_save,        text="  ◆ Campaigns & Saves  ")
+        nb.add(self.tab_gallery,     text="  ◉ Item Gallery  ")
+        nb.add(self.tab_shopkeeper,  text="  ✦ Shopkeeper  ")
 
         self._build_action_tab()
         self._build_settings_tab()
         self._build_sell_tab()
         self._build_save_tab()
         self._build_gallery_tab()
+        self._build_shopkeeper_tab()
         self._setup_hover_scroll()
 
     # ── Global hover-aware scroll ─────────────────────────────────────────────
@@ -2220,108 +2219,7 @@ class ShopApp(tk.Tk):
         ttk.Button(right_col, text="↺  Reset Distribution",
                    command=self._reset_distribution).pack(anchor="w")
 
-        # ── Shopkeeper column — rightmost ─────────────────────────────────────
-        sk_col = ttk.Frame(outer)
-        sk_col.pack(side="right", fill="y", padx=(20, 0))
-
-        tk.Label(sk_col, text="Shopkeeper",
-                 font=("Georgia", 11, "bold"),
-                 bg=c["bg"], fg=c["accent"]).pack(anchor="w", pady=(0, 6))
-
-        sk_frame = tk.Frame(sk_col, bg=c["bg"],
-                            highlightbackground=c["sel"], highlightthickness=1)
-        sk_frame.pack(fill="x", pady=(0, 4))
-
-        # Name + Race row
-        sk_row1 = tk.Frame(sk_frame, bg=c["bg"])
-        sk_row1.pack(fill="x", padx=8, pady=(8, 4))
-
-        name_col = tk.Frame(sk_row1, bg=c["bg"])
-        name_col.pack(side="left", fill="x", expand=True, padx=(0, 6))
-        tk.Label(name_col, text="Name:", bg=c["bg"], fg=c["accent"],
-                 font=("Georgia", 8, "bold")).pack(anchor="w")
-        tk.Entry(name_col, textvariable=self.shopkeeper_name_var,
-                 bg=c["sel"], fg=c["fg"], insertbackground=c["fg"],
-                 relief="flat", font=("Georgia", 9)).pack(fill="x", ipady=3)
-
-        race_col = tk.Frame(sk_row1, bg=c["bg"])
-        race_col.pack(side="left", fill="x", expand=True)
-        tk.Label(race_col, text="Race:", bg=c["bg"], fg=c["accent"],
-                 font=("Georgia", 8, "bold")).pack(anchor="w")
-        self._sk_race_combo = ttk.Combobox(
-            race_col, textvariable=self.shopkeeper_race_var,
-            values=self._custom_races, width=14, font=("Georgia", 9))
-        self._sk_race_combo.pack(fill="x", ipady=2)
-
-        # Personality
-        sk_row2 = tk.Frame(sk_frame, bg=c["bg"])
-        sk_row2.pack(fill="x", padx=8, pady=(0, 4))
-        tk.Label(sk_row2, text="Personality:", bg=c["bg"], fg=c["accent"],
-                 font=("Georgia", 8, "bold")).pack(anchor="w")
-        sk_pers_inner = tk.Frame(sk_row2, bg=c["bg"])
-        sk_pers_inner.pack(fill="x")
-        self._sk_personality_txt = tk.Text(
-            sk_pers_inner, height=3,
-            bg=c["sel"], fg=c["fg"], insertbackground=c["fg"],
-            relief="flat", font=("Georgia", 9), wrap="word", padx=4, pady=3)
-        sk_pers_vsb = ttk.Scrollbar(sk_pers_inner, orient="vertical",
-                                     command=self._sk_personality_txt.yview)
-        self._sk_personality_txt.configure(yscrollcommand=sk_pers_vsb.set)
-        sk_pers_vsb.pack(side="right", fill="y")
-        self._sk_personality_txt.pack(side="left", fill="x", expand=True)
-
-        def _pers_to_var(e=None):
-            self.shopkeeper_personality_var.set(
-                self._sk_personality_txt.get("1.0", "end-1c"))
-        def _pers_to_txt(*_):
-            val = self.shopkeeper_personality_var.get()
-            if val != self._sk_personality_txt.get("1.0", "end-1c"):
-                self._sk_personality_txt.delete("1.0", "end")
-                self._sk_personality_txt.insert("1.0", val)
-        self._sk_personality_txt.bind("<KeyRelease>", _pers_to_var)
-        self.shopkeeper_personality_var.trace_add("write", _pers_to_txt)
-
-        # Appearance
-        sk_row3 = tk.Frame(sk_frame, bg=c["bg"])
-        sk_row3.pack(fill="x", padx=8, pady=(0, 4))
-        tk.Label(sk_row3, text="Appearance / Quirk:", bg=c["bg"], fg=c["accent"],
-                 font=("Georgia", 8, "bold")).pack(anchor="w")
-        sk_app_inner = tk.Frame(sk_row3, bg=c["bg"])
-        sk_app_inner.pack(fill="x")
-        self._sk_appearance_txt = tk.Text(
-            sk_app_inner, height=3,
-            bg=c["sel"], fg=c["fg"], insertbackground=c["fg"],
-            relief="flat", font=("Georgia", 9), wrap="word", padx=4, pady=3)
-        sk_app_vsb = ttk.Scrollbar(sk_app_inner, orient="vertical",
-                                    command=self._sk_appearance_txt.yview)
-        self._sk_appearance_txt.configure(yscrollcommand=sk_app_vsb.set)
-        sk_app_vsb.pack(side="right", fill="y")
-        self._sk_appearance_txt.pack(side="left", fill="x", expand=True)
-
-        def _app_to_var(e=None):
-            self.shopkeeper_appearance_var.set(
-                self._sk_appearance_txt.get("1.0", "end-1c"))
-        def _app_to_txt(*_):
-            val = self.shopkeeper_appearance_var.get()
-            if val != self._sk_appearance_txt.get("1.0", "end-1c"):
-                self._sk_appearance_txt.delete("1.0", "end")
-                self._sk_appearance_txt.insert("1.0", val)
-        self._sk_appearance_txt.bind("<KeyRelease>", _app_to_var)
-        self.shopkeeper_appearance_var.trace_add("write", _app_to_txt)
-
-        # Buttons row
-        sk_btn_row = tk.Frame(sk_frame, bg=c["bg"])
-        sk_btn_row.pack(fill="x", padx=8, pady=(2, 8))
-        ttk.Button(sk_btn_row, text="✦ Generate",
-                   command=self._generate_shopkeeper).pack(side="left")
-        ttk.Button(sk_btn_row, text="✕ Clear",
-                   command=self._clear_shopkeeper).pack(side="left", padx=(6, 0))
-        tk.Label(sk_frame,
-                 text="✔  Saves automatically with shop.",
-                 bg=c["bg"], fg=c["fg"],
-                 font=("Georgia", 7, "italic")).pack(anchor="w", padx=8, pady=(0, 6))
-
-        # Tag filter panel — middle column, takes remaining space
+        # Tag filter panel — takes remaining space
         tag_col = ttk.Frame(outer)
         tag_col.pack(side="left", fill="both", expand=True)
         self._build_tag_filter(tag_col)
@@ -2495,6 +2393,122 @@ class ShopApp(tk.Tk):
         self.status_var.set(
             f"＋ Added '{item_name}' to shop  ({len(self.current_items)} items total)")
         dlg.destroy()
+
+    # ── Shopkeeper Tab ────────────────────────────────────────────────────────
+    def _build_shopkeeper_tab(self):
+        c = self.colors
+        f = self.tab_shopkeeper
+
+        outer = ttk.Frame(f)
+        outer.pack(fill="both", expand=True, padx=20, pady=16)
+
+        tk.Label(outer, text="Shopkeeper Generator",
+                 font=("Georgia", 14, "bold"),
+                 bg=c["bg"], fg=c["accent"]).pack(anchor="w", pady=(0, 4))
+        tk.Label(outer,
+                 text="Generate a shopkeeper NPC for your current shop. "
+                      "Fields save automatically when you save the shop.",
+                 bg=c["bg"], fg=c["fg"],
+                 font=("Georgia", 9, "italic")).pack(anchor="w", pady=(0, 12))
+
+        ttk.Separator(outer, orient="horizontal").pack(fill="x", pady=(0, 12))
+
+        # Content frame (left-aligned, reasonable max width)
+        content = tk.Frame(outer, bg=c["bg"])
+        content.pack(anchor="nw", fill="x")
+
+        sk_frame = tk.Frame(content, bg=c["bg"],
+                            highlightbackground=c["sel"], highlightthickness=1)
+        sk_frame.pack(fill="x", pady=(0, 4), ipadx=4)
+
+        # Name + Race row
+        sk_row1 = tk.Frame(sk_frame, bg=c["bg"])
+        sk_row1.pack(fill="x", padx=12, pady=(12, 6))
+
+        name_col = tk.Frame(sk_row1, bg=c["bg"])
+        name_col.pack(side="left", fill="x", expand=True, padx=(0, 12))
+        tk.Label(name_col, text="Name:", bg=c["bg"], fg=c["accent"],
+                 font=("Georgia", 9, "bold")).pack(anchor="w")
+        tk.Entry(name_col, textvariable=self.shopkeeper_name_var,
+                 bg=c["sel"], fg=c["fg"], insertbackground=c["fg"],
+                 relief="flat", font=("Georgia", 10)).pack(fill="x", ipady=4)
+
+        race_col = tk.Frame(sk_row1, bg=c["bg"])
+        race_col.pack(side="left", fill="x", expand=True)
+        tk.Label(race_col, text="Race:", bg=c["bg"], fg=c["accent"],
+                 font=("Georgia", 9, "bold")).pack(anchor="w")
+        self._sk_race_combo = ttk.Combobox(
+            race_col, textvariable=self.shopkeeper_race_var,
+            values=self._custom_races, width=18, font=("Georgia", 10))
+        self._sk_race_combo.pack(fill="x", ipady=3)
+
+        # Personality
+        sk_row2 = tk.Frame(sk_frame, bg=c["bg"])
+        sk_row2.pack(fill="x", padx=12, pady=(0, 6))
+        tk.Label(sk_row2, text="Personality:", bg=c["bg"], fg=c["accent"],
+                 font=("Georgia", 9, "bold")).pack(anchor="w")
+        sk_pers_inner = tk.Frame(sk_row2, bg=c["bg"])
+        sk_pers_inner.pack(fill="x")
+        self._sk_personality_txt = tk.Text(
+            sk_pers_inner, height=4,
+            bg=c["sel"], fg=c["fg"], insertbackground=c["fg"],
+            relief="flat", font=("Georgia", 10), wrap="word", padx=6, pady=4)
+        sk_pers_vsb = ttk.Scrollbar(sk_pers_inner, orient="vertical",
+                                     command=self._sk_personality_txt.yview)
+        self._sk_personality_txt.configure(yscrollcommand=sk_pers_vsb.set)
+        sk_pers_vsb.pack(side="right", fill="y")
+        self._sk_personality_txt.pack(side="left", fill="x", expand=True)
+
+        def _pers_to_var(e=None):
+            self.shopkeeper_personality_var.set(
+                self._sk_personality_txt.get("1.0", "end-1c"))
+        def _pers_to_txt(*_):
+            val = self.shopkeeper_personality_var.get()
+            if val != self._sk_personality_txt.get("1.0", "end-1c"):
+                self._sk_personality_txt.delete("1.0", "end")
+                self._sk_personality_txt.insert("1.0", val)
+        self._sk_personality_txt.bind("<KeyRelease>", _pers_to_var)
+        self.shopkeeper_personality_var.trace_add("write", _pers_to_txt)
+
+        # Appearance / Quirk
+        sk_row3 = tk.Frame(sk_frame, bg=c["bg"])
+        sk_row3.pack(fill="x", padx=12, pady=(0, 6))
+        tk.Label(sk_row3, text="Appearance / Quirk:", bg=c["bg"], fg=c["accent"],
+                 font=("Georgia", 9, "bold")).pack(anchor="w")
+        sk_app_inner = tk.Frame(sk_row3, bg=c["bg"])
+        sk_app_inner.pack(fill="x")
+        self._sk_appearance_txt = tk.Text(
+            sk_app_inner, height=4,
+            bg=c["sel"], fg=c["fg"], insertbackground=c["fg"],
+            relief="flat", font=("Georgia", 10), wrap="word", padx=6, pady=4)
+        sk_app_vsb = ttk.Scrollbar(sk_app_inner, orient="vertical",
+                                    command=self._sk_appearance_txt.yview)
+        self._sk_appearance_txt.configure(yscrollcommand=sk_app_vsb.set)
+        sk_app_vsb.pack(side="right", fill="y")
+        self._sk_appearance_txt.pack(side="left", fill="x", expand=True)
+
+        def _app_to_var(e=None):
+            self.shopkeeper_appearance_var.set(
+                self._sk_appearance_txt.get("1.0", "end-1c"))
+        def _app_to_txt(*_):
+            val = self.shopkeeper_appearance_var.get()
+            if val != self._sk_appearance_txt.get("1.0", "end-1c"):
+                self._sk_appearance_txt.delete("1.0", "end")
+                self._sk_appearance_txt.insert("1.0", val)
+        self._sk_appearance_txt.bind("<KeyRelease>", _app_to_var)
+        self.shopkeeper_appearance_var.trace_add("write", _app_to_txt)
+
+        # Buttons row
+        sk_btn_row = tk.Frame(sk_frame, bg=c["bg"])
+        sk_btn_row.pack(fill="x", padx=12, pady=(4, 12))
+        ttk.Button(sk_btn_row, text="✦ Generate Shopkeeper",
+                   command=self._generate_shopkeeper).pack(side="left")
+        ttk.Button(sk_btn_row, text="✕ Clear",
+                   command=self._clear_shopkeeper).pack(side="left", padx=(8, 0))
+        tk.Label(sk_btn_row,
+                 text="✔  Saves automatically with shop.",
+                 bg=c["bg"], fg=c["fg"],
+                 font=("Georgia", 8, "italic")).pack(side="left", padx=(16, 0))
 
     def _clear_shopkeeper(self):
         """Clear all shopkeeper fields."""
