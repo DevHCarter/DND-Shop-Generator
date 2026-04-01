@@ -8,15 +8,16 @@
 
 ```
 Folder Name
+├── Shop_data
+|    └── shops.db              # Where your shop preferences are stored
 ├── DND_ShopGen... .py         # Python App
 └── Items_Beta.csv             # Item Database
-
 ```
 ---
 
 ## Generating a Shop
 
-1. Select a **Shop Type** from the dropdown (Alchemy, Armory, Magic, etc.)
+1. Select a **Shop Type** from the dropdown (Alchemy, Blacksmith, Magic, etc.)
 2. Click **Name** to generate a random shop name, or type your own
 3. Set **City Size** and **Wealth** in the Stock Settings tab
 4. Include or exclude any particular tags based on the desired shop
@@ -24,10 +25,8 @@ Folder Name
 
 ---
 
-## Features
-
 ### Shop Types
-Alchemy · Armory · Blacksmith · Fletcher & Bowyer · General Store · Jeweler & Curiosities · Magic · Scribe & Scroll · Stables & Outfitter · Tavern & Inn
+Alchemy · Armory · Blacksmith · Fletcher · General Store · Jeweler & Curiosities · Magic · Scribe & Scroll · Stables & Outfitter
 
 ### City Size
 Controls how many items appear and quantity of each:
@@ -47,30 +46,45 @@ Controls how many items appear and quantity of each:
 
 ---
 
-### Item Tags
-All shops can be customized to include, or exclude certain items based on its tags. All tags are listed below
+### Items
 
-##### **Race/Culture:** 
-###### Drow, Draconic, Dwarven, Elven, Fey, Fiendish, Giant
+- ### Tags
+    All shops can be customized to include, or exclude certain items based on its tags. All tags are listed below
 
-##### **Element/Damage Type:** 
-###### Acid, Fire, Force, Ice/Cold, Lightning, Necrotic, Poison, Psychic, Radiant, Thunder, Slashing, Piercing, Bludgeoning 
+    ##### **Race/Culture:** 
+    ###### Drow, Draconic, Dwarven, Elven, Fey, Fiendish, Giant
+    
+    ##### **Element/Damage Type:** 
+    ###### Acid, Fire, Force, Ice/Cold, Lightning, Necrotic, Poison, Psychic, Radiant, Thunder, Slashing, Piercing, Bludgeoning 
+    
+    ##### **Type(Taken from 5e.tools):** 
+    ###### Adventuring Gear, Ammunition, Artisans, Tools, Amulet/Necklace, Belt, Book/Tome, Boots/Footwear, Card/Deck, Cloak, Dust/Powder, Figurine, Food/Drink, Gloves/Bracers, Headwear, Instrument, Potion, Ring, Rod, Scroll, Staff, Tattoo, Tools, Wand, Other, Trade Good, Spellcasting Focus, Wonderous
+    
+    ##### **Weapon & Armor:** 
+    ###### Armor, Finesse, Generic Variant, Heavy Armor, Heavy Weapon, Light Armor, Light Weapon, Medium Armor, Melee, Ranged Weapon, Shield, Thrown, Two-Handed, Versatile, Weapon
+    
+    ##### **Rarity:** 
+    ###### Artifact, Common, Legendary, Mundane, Rare, Uncommon, Very Rare
 
-##### **Type(Taken from 5e.tools):** 
-###### Adventuring Gear, Ammunition, Artisans, Tools, Amulet/Necklace, Belt, Book/Tome, Boots/Footwear, Card/Deck, Cloak, Dust/Powder, Figurine, Food/Drink, Gloves/Bracers, Headwear, Instrument, Potion, Ring, Rod, Scroll, Staff, Tattoo, Tools, Wand, Other, Trade Good, Spellcasting Focus, Wonderous
+- ### Item Categories
 
-##### **Weapon & Armor:** 
-###### Armor, Finesse, Generic Variant, Heavy Armor, Heavy Weapon, Light Armor, Light Weapon, Medium Armor, Melee, Ranged Weapon, Shield, Thrown, Two-Handed, Versatile, Weapon
+    ##### Staples:
+    
+    ###### Staples are items that will *always* appear in a particular shop. These items are typically mundane or common and are hand-picked and only consist of a few items per shop type. These items do not count against the total number of items in the pool. 
+    
+    ##### Semi-Staples:
+    ###### Semi-Staples are similar to Staples, but have a *50%* chance to be included in the shop pool. These items do not count against the total number of items in the pool. 
+    
+    ##### Primary Items:
+    ###### Primary items are what make up the majority of the items in the .csv file; basically all magical items that exist.
 
-##### **Rarity:** 
-###### Artifact, Common, Legendary, Mundane, Rare, Uncommon, Very Rare
 
 ---
 
 ### Quantity System
 Each item gets a quantity based on `ceiling(size_mod × weight + 1)`:
 - `size_mod` is a random float drawn from a city + rarity range table below
-- `weight` (0–3) is inferred from the item — consumables stack most, legendary items are always singular
+- `weight` (0–3) is inferred from the item -- consumables stack most, legendary items are always singular
 
 
 Size Mod Table
