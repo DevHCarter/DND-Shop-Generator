@@ -131,15 +131,13 @@ MASTER_CSV = BASE_DIR / "Items_Beta_1.csv"
 
 SHOP_TYPE_TO_POOL = {
     "Alchemy":               "alchemy",
-    "Armory":                "armory",
     "Blacksmith":            "blacksmith",
-    "Fletcher & Bowyer":     "fletcher_bowyer",
+    "Fletcher":              "fletcher_bowyer",
     "General Store":         "general_store",
     "Jeweler & Curiosities": "jeweler",
     "Magic":                 "magic",
     "Scribe & Scroll":       "scribe_scroll",
     "Stables & Outfitter":   "stables",
-    "Tavern & Inn":          "tavern",
 }
 
 # ── Source book abbreviation → full name map ─────────────────────────────────
@@ -247,7 +245,7 @@ RARITY_PRICE_RANGES = {
     "unknown (magic)": (50,     500),
 }
 
-# ── Market price ranges (for the Est. Value column) ────────────────────────────
+# ── Market price ranges (for the DMG Price Guide column) ────────────────────────────
 # Only generated for rarities that make sense in a shop context.
 MARKET_PRICE_RANGES: dict[str, tuple[int, int]] = {
     "common":    (50,    100),
@@ -303,16 +301,6 @@ SHOP_NAME_PARTS: dict[str, dict[str, list[str]]] = {
                          "Madame Voss", "Thornwick", "Brimstone", "Ember", "Cobalt",
                          "Sable", "Orwick", "Fenrath"],
     },
-    "Armory": {
-        "adjectives":   ["Iron", "Brazen", "Tempered", "Steel", "Unyielding", "Dented",
-                         "Cold", "Sunken", "Wyrm-Scale", "Gilded", "Forged", "Battle-Worn"],
-        "nouns":        ["Bastion", "Bulwark", "Pauldron", "Visor", "Curtain",
-                         "Guard", "Shell", "Plate", "Greave", "Vambrace"],
-        "second_nouns": ["Sword", "Shield", "Mail", "Rivet", "Helm", "Buckler", "Hauberk"],
-        "trade_words":  ["Armory", "Armaments", "Harness", "Outfitters", "Arms", "Works"],
-        "npc_names":    ["Velthurin", "Harkon", "Ironforge", "Dragonsteel", "Aegis",
-                         "Crestfall", "Coldmere", "Rampart", "Valdris", "Morthane"],
-    },
     "Blacksmith": {
         "adjectives":   ["Red", "White-Hot", "Sooty", "Bent", "Clanging", "Ashen",
                          "Deepfire", "Glowing", "Cracked", "Hammered", "Scorched"],
@@ -325,7 +313,7 @@ SHOP_NAME_PARTS: dict[str, dict[str, list[str]]] = {
                          "Ironblood", "Deepfire", "Ashfall", "Thunderstrike",
                          "Durnok", "Heldra", "Korrund"],
     },
-    "Fletcher & Bowyer": {
+    "Fletcher": {
         "adjectives":   ["Singing", "Fletched", "Taut", "Notched", "Straight",
                          "Loosed", "Drawn", "Swift", "Silent", "Keen"],
         "nouns":        ["Quiver", "Arrow", "Stave", "String", "Nock",
@@ -402,21 +390,6 @@ SHOP_NAME_PARTS: dict[str, dict[str, list[str]]] = {
         "npc_names":    ["Ironmane", "Farrow", "Thunderhoof", "Crossroads",
                          "Briarvale", "Greystream", "Cloverfield", "Stonepath",
                          "Willowmere", "Crestfall", "Dusthoof", "Mirren"],
-    },
-    "Tavern & Inn": {
-        "adjectives":   ["Rusty", "Golden", "Broken", "Tipsy", "Stumbling",
-                         "Forgotten", "Half-Empty", "Laughing", "Sleeping",
-                         "Salted", "Warm", "Last", "Crooked", "Drunken"],
-        "nouns":        ["Flagon", "Goose", "Compass", "Cup", "Bard",
-                         "Hearth", "Lantern", "Skull", "Dragon", "Boot",
-                         "Griffon", "Boar", "Hound", "Raven"],
-        "second_nouns": ["Moon", "Mead", "Wound", "Coin", "Candle",
-                         "Ember", "Barrel", "Sword", "Pipe"],
-        "trade_words":  ["Inn", "Tavern", "Rest", "Lodge",
-                         "Alehouse", "Boarding House", "Roadhouse"],
-        "npc_names":    ["Widow Harken", "Old Marten", "Crossroads",
-                         "Hearthstone", "Dunwall", "Gretta", "Tobbin",
-                         "Mirla", "Aldous", "Fenwick"],
     },
 }
 
@@ -827,6 +800,38 @@ def load_all_items():
 # ══════════════════════════════════════════════════════════════════════════════
 #  Shop Generation
 # ══════════════════════════════════════════════════════════════════════════════
+def _raw_to_shop_item(raw: dict, city_size: str = "Town", wealth: str = "Average") -> dict:
+    """Convert a raw CSV row dict into the standard shop item dict used by the UI."""
+    rarity_raw = raw.get("Rarity", "")
+    mkt        = generate_market_price(rarity_raw)
+    return {
+        "item_id":      raw.get("Item ID", ""),
+        "name":         raw.get("Name", ""),
+        "rarity":       rarity_raw,
+        "item_type":    raw.get("Type", ""),
+        "source":       raw.get("Source", ""),
+        "page":         raw.get("Page", ""),
+        "cost_given":   raw.get("Value", ""),
+        "quantity":     str(generate_item_quantity(raw, city_size, wealth)),
+        "locked":       False,
+        "attunement":   raw.get("Attunement", ""),
+        "damage":       raw.get("Damage", ""),
+        "properties":   raw.get("Properties", ""),
+        "mastery":      raw.get("Mastery", ""),
+        "weight":       raw.get("Weight", ""),
+        "tags":         raw.get("Tags", ""),
+        "description":  raw.get("Text", ""),
+        "table_data":   raw.get("Table", ""),
+        "sane_cost":    raw.get("Sane_Cost", ""),
+        "market_price": str(mkt) if mkt is not None else "",
+    }
+
+
+def _pool_keys_from(value: str) -> set[str]:
+    """Parse a pipe-separated pool key string (Staple / Semi-Staple columns)."""
+    return {p.strip() for p in value.split("|") if p.strip()}
+
+
 def generate_shop_items(
     shop_type: str,
     count: int,
@@ -838,32 +843,22 @@ def generate_shop_items(
     wealth: str = "Average",
     culture: str | None = None,
     mundane_only: bool = False,
+    exclude_homebrew: bool = False,
 ) -> list[dict]:
+    """Generate shop inventory.
+
+    Staples  — always included, never count toward *count*.
+    Semi-staples — 50 % chance each, never count toward *count*.
+    Regular items — fill exactly *count* slots (minus already-locked items).
+    """
     if shop_type not in ALL_ITEMS or not ALL_ITEMS[shop_type]:
         return []
 
+    pool_key     = SHOP_TYPE_TO_POOL.get(shop_type, "")
     source_items = ALL_ITEMS[shop_type]
-    buckets: dict[str, list[dict]] = {}
-    for item in source_items:
-        r = normalize_rarity(item.get("Rarity", "mundane"))
-        buckets.setdefault(r, []).append(item)
-
-    locked_items   = existing_locked or []
-    locked_names   = {i["name"] for i in locked_items}
-    needed         = count - len(locked_items)
-    if needed <= 0:
-        return locked_items
-
-    generated      = list(locked_items)
-    existing_names = set(locked_names)
-    attempts       = 0
-    fallback_order = ["mundane", "common", "uncommon", "rare", "none", "very rare", "legendary"]
 
     def tag_match(item: dict) -> bool:
-        """Exclude beats include. Excluded tags hard-block; include filters
-        then require at least one match (OR logic). No filters = allow all.
-        Culture filter: items without any cultural tag are Universal (always
-        pass); items with a cultural tag only pass if it matches active culture."""
+        """Return True if the item passes all active filters."""
         item_tags = {t.strip() for t in item.get("Tags", "").split(",") if t.strip()}
         if tag_excludes and (item_tags & tag_excludes):
             return False
@@ -871,55 +866,166 @@ def generate_shop_items(
             return False
         if not culture_match(item, culture):
             return False
-        if mundane_only:
-            r = normalize_rarity(item.get("Rarity", ""))
-            if r not in ("mundane", "none", "common", ""):
-                return False
+        if mundane_only and normalize_rarity(item.get("Rarity", "")) not in (
+                "mundane", "none", "common", ""):
+            return False
+        if exclude_homebrew and item.get("Source", "") in _TGS_SOURCES:
+            return False
         return True
 
-    while len(generated) - len(locked_items) < needed and attempts < needed * 20:
+    # ── Categorise source items ──────────────────────────────────────────────
+    staple_pool      = [i for i in source_items
+                        if pool_key in _pool_keys_from(i.get("Staple", ""))]
+    semi_staple_pool = [i for i in source_items
+                        if pool_key in _pool_keys_from(i.get("Semi-Staple", ""))]
+    staple_names     = {i["Name"] for i in staple_pool} | {i["Name"] for i in semi_staple_pool}
+    regular_pool     = [i for i in source_items if i["Name"] not in staple_names]
+
+    locked_items   = existing_locked or []
+    locked_names   = {i["name"] for i in locked_items}
+    result         = list(locked_items)
+    existing_names = set(locked_names)
+
+    # ── 1. Staples — always add ──────────────────────────────────────────────
+    for raw in staple_pool:
+        if raw["Name"] not in existing_names and tag_match(raw):
+            result.append(_raw_to_shop_item(raw, city_size, wealth))
+            existing_names.add(raw["Name"])
+
+    # ── 2. Semi-staples — 50 % chance ───────────────────────────────────────
+    for raw in semi_staple_pool:
+        if raw["Name"] not in existing_names and tag_match(raw) and random.random() < 0.5:
+            result.append(_raw_to_shop_item(raw, city_size, wealth))
+            existing_names.add(raw["Name"])
+
+    # ── 3. Regular items — fill *count* slots (locked items count against this) ──
+    needed = max(0, count - len(locked_items))
+
+    buckets: dict[str, list[dict]] = {}
+    for item in regular_pool:
+        r = normalize_rarity(item.get("Rarity", "mundane"))
+        buckets.setdefault(r, []).append(item)
+
+    fallback_order = ["mundane", "common", "uncommon", "rare", "none", "very rare", "legendary"]
+    regular_added  = 0
+    attempts       = 0
+
+    while regular_added < needed and attempts < needed * 20:
         attempts += 1
         rarity = weighted_rarity_pick(rarity_weights)
-        chosen_item = None
+        chosen = None
         for r in [rarity] + [x for x in fallback_order if x != rarity]:
-            bucket    = buckets.get(r, [])
-            available = [x for x in bucket
+            available = [x for x in buckets.get(r, [])
                          if x["Name"] not in existing_names and tag_match(x)]
             if available:
-                chosen_item = random.choice(available)
+                chosen = random.choice(available)
                 break
-        if not chosen_item:
+        if not chosen:
             continue
+        result.append(_raw_to_shop_item(chosen, city_size, wealth))
+        existing_names.add(chosen["Name"])
+        regular_added += 1
 
-        cost_given = chosen_item.get("Value", "")
-        quantity   = str(generate_item_quantity(chosen_item, city_size, wealth))
-        rarity_raw = chosen_item.get("Rarity", "")
-        mkt = generate_market_price(rarity_raw)
+    return result
 
-        generated.append({
-            "item_id":      chosen_item.get("Item ID", ""),
-            "name":         chosen_item.get("Name", ""),
-            "rarity":       rarity_raw,
-            "item_type":    chosen_item.get("Type", ""),
-            "source":       chosen_item.get("Source", ""),
-            "page":         chosen_item.get("Page", ""),
-            "cost_given":   cost_given,
-            "quantity":     quantity,
-            "locked":       False,
-            "attunement":   chosen_item.get("Attunement", ""),
-            "damage":       chosen_item.get("Damage", ""),
-            "properties":   chosen_item.get("Properties", ""),
-            "mastery":      chosen_item.get("Mastery", ""),
-            "weight":       chosen_item.get("Weight", ""),
-            "tags":         chosen_item.get("Tags", ""),
-            "description":  chosen_item.get("Text", ""),
-            "table_data":   chosen_item.get("Table", ""),
-            "sane_cost":    chosen_item.get("Sane_Cost", ""),
-            "market_price": str(mkt) if mkt is not None else "",
-        })
-        existing_names.add(chosen_item["Name"])
 
-    return generated
+# ── Shop Info data ────────────────────────────────────────────────────────────
+# Each entry: description (str) + services (list of (name, description, cost) tuples)
+# cost may be empty string if price is negotiated or unknown.
+SHOP_INFO: dict[str, dict] = {
+    "Alchemy": {
+        "description": (
+            "A shop steeped in the smell of reagents and smoke. Alchemists stock "
+            "potions, tinctures, and curative compounds for travellers and locals alike."
+        ),
+        "services": [
+            ("Potion Identification", "Identify unknown liquids; fee varies by complexity.",        "5gp – 25gp"),
+            ("Custom Potions",        "Bespoke compounds brewed to specification.",                 "50gp – 300gp  |  1d4+1 days lead time"),
+            ("Ingredient Appraisal",  "Assess the value and potency of raw alchemical materials.", "5gp – 10gp per sample"),
+            ("Poison Testing",        "Discreet testing of substances for toxins or adulterants.", "10gp – 25gp"),
+        ],
+    },
+    "Blacksmith": {
+        "description": (
+            "A forge that works iron and steel into tools, weapons, and hardware. "
+            "The smell of hot metal and coal smoke hangs over everything."
+        ),
+        "services": [
+            ("Weapon & Armour Repair", "Restore damaged gear to serviceable condition.",                 "10%–20% of item value  (min. 10gp)"),
+            ("Custom Forging",         "Commission bespoke blades, armour pieces, or fittings.",         "Negotiated"),
+            ("Material Appraisal",     "Assess the quality and value of raw metal stock.",               "5gp – 10gp"),
+            ("Hardening & Tempering",  "Improve edge retention and durability of existing blades.",      "25gp – 50gp"),
+            ("Tool Fabrication",       "Craft specialist tools and hardware to order.",                  "10gp – 25gp"),
+        ],
+    },
+    "Fletcher": {
+        "description": (
+            "A specialist in ranged arms — bows, crossbows, bolts, and arrows. "
+            "Good fletchers are valued by hunters, militia, and adventurers alike."
+        ),
+        "services": [
+            ("Arrow & Bolt Crafting", "Custom ammunition fletched to specification.",                        "Negotiated"),
+            ("Bow Stringing",         "Restring and re-wax bowstrings for optimal performance.",             "1gp – 5gp"),
+            ("Weapon Tuning",         "Adjust draw weight, balance, and sighting on existing bows.",         "Negotiated"),
+            ("Custom Orders",         "Commission specialty bows or crossbows with lead time.",              "50gp – 300gp + item value  |  1d4+1 days lead time"),
+        ],
+    },
+    "General Store": {
+        "description": (
+            "A catch-all trading post stocking the everyday needs of travellers and "
+            "townsfolk — rope, rations, tools, and a little bit of everything."
+        ),
+        "services": [
+        ],
+    },
+    "Jeweler & Curiosities": {
+        "description": (
+            "A cabinet of glittering things — gems, fine jewellery, and oddities of "
+            "uncertain provenance. The proprietor has an eye for the unusual."
+        ),
+        "services": [
+            ("Gem Appraisal",    "Professional valuation of stones and jewellery.",                    "5gp – 50gp"),
+            ("Jewellery Repair", "Restore clasps, reset stones, and clean tarnished pieces.",          "10gp – 50gp depending on damage"),
+            ("Pawn",             "Loans in exchange for items of value; see Sell Item tab.",           "~80% of item's value"),
+            ("Consignment",      "Sell items through the shop for a cut of the final price.",          "Payment on sale"),
+        ],
+    },
+    "Magic": {
+        "description": (
+            "A repository of enchanted items, arcane supplies, and magical oddities. "
+            "The shelves hold more than they appear to."
+        ),
+        "services": [
+            ("Item Identification",     "Identify magic items; appointment preferred.",                      "10gp – 100gp"),
+            ("Attunement Consultation", "Guidance on safely attuning to new magic items.",                   "15gp – 30gp"),
+            ("Reagent & Supply Sales",  "Spell components, inks, crystals, and ritual materials.",           "5gp – 25gp"),
+            ("Custom Enchantment",      "Commission enchantments on items you supply; long lead times.",     "500+gp + material components  |  d12+7 days lead time"),
+        ],
+    },
+    "Scribe & Scroll": {
+        "description": (
+            "A quiet shop of ink, parchment, and careful hands. Scribes produce "
+            "documents, copy texts, and transcribe spells with meticulous precision."
+        ),
+        "services": [
+            ("Scroll Transcription",   "Copy spells onto scroll for later casting.",                          "25gp per spell level"),
+            ("Copying & Illumination", "Duplicate books, maps, and manuscripts to order.",                    "5gp – 25gp per page"),
+            ("Spell Research",         "Reference library available to scholars for a daily fee.",            "15gp per day"),
+            ("Translation",            "Translate texts from obscure languages given sufficient time.",       "10gp – 50gp depending on language obscurity"),
+        ],
+    },
+    "Stables & Outfitter": {
+        "description": (
+            "A livery stable and outfitter supplying mounts, tack, and travel gear "
+            "for those heading out on the road."
+        ),
+        "services": [
+            ("Mount Boarding",   "Safe stabling, feed, and grooming by the night or week.",  "1gp/day"),
+            ("Mount Hire",       "Rent a mount for local travel; deposit required.",          "1gp – 5gp/day  +  30gp returnable deposit"),
+            ("Farrier Services", "Shoeing, hoof care, and basic veterinary assessment.",      "5sp – 2gp"),
+        ],
+    },
+}
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -946,7 +1052,8 @@ class ShopApp(tk.Tk):
         self._sort_asc         = True
         self.price_modifier    = tk.IntVar(value=100)
         self._inspect_expanded = False   # whether inspector is in focus mode
-        self.mundane_only_var  = tk.BooleanVar(value=False)  # mundane-only mode
+        self.mundane_only_var    = tk.BooleanVar(value=False)  # mundane-only mode
+        self.exclude_homebrew_var = tk.BooleanVar(value=False) # exclude TGS1-5 items
 
         # Table display column toggles
         self.show_qty_col      = tk.BooleanVar(value=True)
@@ -1080,12 +1187,14 @@ class ShopApp(tk.Tk):
         self.tab_save        = ttk.Frame(nb)
         self.tab_gallery     = ttk.Frame(nb)
         self.tab_shopkeeper  = ttk.Frame(nb)
-        nb.add(self.tab_action,      text="  ⚡ Action  ")
-        nb.add(self.tab_settings,    text="  ⚙ Stock Settings  ")
-        nb.add(self.tab_sell,        text="  ◈ Sell Item  ")
+        self.tab_shop_info   = ttk.Frame(nb)
+        nb.add(self.tab_action,      text="  ▶ Shop  ")
+        nb.add(self.tab_settings,    text="  ⚙️ Stock Settings  ")
+        nb.add(self.tab_sell,        text="  💰 Sell Item  ")
         nb.add(self.tab_save,        text="  ◆ Campaigns & Saves  ")
-        nb.add(self.tab_gallery,     text="  ◉ Item Gallery  ")
+        nb.add(self.tab_gallery,     text="  🕮 Item Gallery  ")
         nb.add(self.tab_shopkeeper,  text="  ✦ Shopkeeper  ")
+        nb.add(self.tab_shop_info,   text="  ℹ Shop Info  ")
 
         self._build_action_tab()
         self._build_settings_tab()
@@ -1093,6 +1202,7 @@ class ShopApp(tk.Tk):
         self._build_save_tab()
         self._build_gallery_tab()
         self._build_shopkeeper_tab()
+        self._build_shop_info_tab()
         self._setup_hover_scroll()
 
     # ── Global hover-aware scroll ─────────────────────────────────────────────
@@ -1472,18 +1582,9 @@ class ShopApp(tk.Tk):
             font=("Georgia", 9, "bold"))
         self.price_mod_label.pack(side="left", padx=(0, 10))
 
-        # Search bar
-        tk.Label(btn_bar, text="Filter Items:", bg=c["hdr"], fg=c["fg"],
-                 font=("Georgia", 9)).pack(side="right", padx=(0, 4))
-        self.search_var = tk.StringVar()
-        self.search_var.trace_add("write", lambda *_: self._populate_table(self.current_items))
-        tk.Entry(btn_bar, textvariable=self.search_var, width=22,
-                 bg=c["sel"], fg=c["fg"], insertbackground=c["fg"],
-                 relief="flat", font=("Georgia", 9)).pack(side="right", padx=(0, 4))
-
         # Treeview
         cols   = ("name", "rarity", "cost", "est_value", "quantity", "locked")
-        hdrs   = ("Name", "Rarity", "Cost", "Est. Value", "Qty", "Locked")
+        hdrs   = ("Name", "Rarity", "Cost", "DMG Price Range", "Qty", "Locked")
         widths = (290, 100, 120, 110, 65, 60)
 
         tree_frame = ttk.Frame(left)
@@ -1928,7 +2029,7 @@ class ShopApp(tk.Tk):
             except ValueError:
                 mkt_str = ""
             if mkt_str:
-                field("Est. Value", mkt_str)
+                field("DMG Price Range", mkt_str)
 
         # ── Sane Magical Prices guide value ──
         sane_raw = item.get("sane_cost", "")
@@ -2008,11 +2109,11 @@ class ShopApp(tk.Tk):
             ("Cost",        item.get("cost_given", "")),
         ]
 
-        # Est. Value
+        # DMG Price Range
         mkt_raw = item.get("market_price", "")
         if mkt_raw:
             try:
-                stats.append(("Est. Value", f"{int(mkt_raw):,} gp"))
+                stats.append(("DMG Price Range", f"{int(mkt_raw):,} gp"))
             except ValueError:
                 pass
 
@@ -2136,7 +2237,7 @@ class ShopApp(tk.Tk):
 
         mundane_chk = tk.Checkbutton(
             left_col,
-            text="Mundane Only\n(common items at most)",
+            text="Non-Magical Shop\n(common items at most)",
             variable=self.mundane_only_var,
             command=self._on_mundane_only_toggle,
             bg=c["bg"], fg=c["fg"],
@@ -2146,9 +2247,21 @@ class ShopApp(tk.Tk):
             justify="left",
             anchor="w",
         )
-        mundane_chk.pack(anchor="w", pady=2)
+        
+        homebrew_chk = tk.Checkbutton(
+            left_col,
+            text="DND Official Only\n(removes all homebrew items)",
+            variable=self.exclude_homebrew_var,
+            bg=c["bg"], fg=c["fg"],
+            selectcolor=c["sel"],
+            activebackground=c["bg"], activeforeground=c["accent"],
+            font=("Georgia", 10),
+            justify="left",
+            anchor="w",
+        )
+        homebrew_chk.pack(anchor="w", pady=2)
         tk.Label(left_col,
-                 text="Overrides rarity sliders.\nGood for general stores\nand travelling merchants.",
+                 text="Filters out all homebrew items\n (The Griffon's Saddlebag Books 1-5)",
                  bg=c["bg"], fg=c["fg"],
                  font=("Georgia", 8, "italic"),
                  justify="left").pack(anchor="w", pady=(0, 4))
@@ -2167,7 +2280,7 @@ class ShopApp(tk.Tk):
             activebackground=c["bg"], activeforeground=c["accent"],
             font=("Georgia", 10)).pack(anchor="w", pady=2)
         tk.Checkbutton(
-            left_col, text="Show Est. Value column",
+            left_col, text="Show DMG Price Range column",
             variable=self.show_est_val_col,
             command=self._update_display_columns,
             bg=c["bg"], fg=c["fg"], selectcolor=c["sel"],
@@ -2226,7 +2339,7 @@ class ShopApp(tk.Tk):
 
     # ── Table column visibility ────────────────────────────────────────────────
     def _update_display_columns(self, *_):
-        """Show/hide Qty and Est. Value columns based on toggle settings."""
+        """Show/hide Qty and DMG price range columns based on toggle settings."""
         if not hasattr(self, "tree"):
             return
         all_cols = ("name", "rarity", "cost", "est_value", "quantity", "locked")
@@ -2361,33 +2474,8 @@ class ShopApp(tk.Tk):
                                 parent=dlg)
             return
 
-        # Build the shop item dict (same structure as generate_shop_items)
-        rarity_raw = raw.get("Rarity", "")
-        mkt = generate_market_price(rarity_raw)
-        quantity = str(generate_item_quantity(
-            raw, self.city_size_var.get(), self.wealth_var.get()))
-
-        new_item = {
-            "item_id":     raw.get("Item ID", ""),
-            "name":        item_name,
-            "rarity":      rarity_raw,
-            "item_type":   raw.get("Type", ""),
-            "source":      raw.get("Source", ""),
-            "page":        raw.get("Page", ""),
-            "cost_given":  raw.get("Value", ""),
-            "quantity":    quantity,
-            "locked":      False,
-            "attunement":  raw.get("Attunement", ""),
-            "damage":      raw.get("Damage", ""),
-            "properties":  raw.get("Properties", ""),
-            "mastery":     raw.get("Mastery", ""),
-            "weight":      raw.get("Weight", ""),
-            "tags":        raw.get("Tags", ""),
-            "description": raw.get("Text", ""),
-            "table_data":  raw.get("Table", ""),
-            "sane_cost":   raw.get("Sane_Cost", ""),
-            "market_price": str(mkt) if mkt is not None else "",
-        }
+        new_item = _raw_to_shop_item(raw, self.city_size_var.get(), self.wealth_var.get())
+        new_item["name"] = item_name   # preserve display name chosen in dialog
         self.current_items.append(new_item)
         self._populate_table(self.current_items)
         self.status_var.set(
@@ -2510,25 +2598,155 @@ class ShopApp(tk.Tk):
                  bg=c["bg"], fg=c["fg"],
                  font=("Georgia", 8, "italic")).pack(side="left", padx=(16, 0))
 
+    # ── Shop Info Tab ─────────────────────────────────────────────────────────
+    def _build_shop_info_tab(self):
+        c = self.colors
+        f = self.tab_shop_info
+
+        # Scrollable canvas so content never clips
+        canvas = tk.Canvas(f, bg=c["bg"], highlightthickness=0)
+        vsb    = ttk.Scrollbar(f, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=vsb.set)
+        vsb.pack(side="right", fill="y")
+        canvas.pack(side="left", fill="both", expand=True)
+
+        self._shop_info_inner = tk.Frame(canvas, bg=c["bg"])
+        _win = canvas.create_window((0, 0), window=self._shop_info_inner, anchor="nw")
+
+        def _on_configure(e):
+            canvas.configure(scrollregion=canvas.bbox("all"))
+        def _on_canvas_resize(e):
+            canvas.itemconfig(_win, width=e.width)
+        self._shop_info_inner.bind("<Configure>", _on_configure)
+        canvas.bind("<Configure>", _on_canvas_resize)
+
+        # Initial placeholder
+        tk.Label(self._shop_info_inner,
+                 text="Generate a shop to see its info here.",
+                 bg=c["bg"], fg=c["fg"],
+                 font=("Georgia", 10, "italic")).pack(padx=20, pady=20)
+
+    def _refresh_shop_info(self):
+        """Rebuild the Shop Info tab contents to reflect the current shop state."""
+        c          = self.colors
+        shop_type  = self.current_shop_type.get()
+        city_size  = self.city_size_var.get()
+        wealth     = self.wealth_var.get()
+        shop_name  = self.shop_name_var.get() or f"{shop_type} Shop"
+        info       = SHOP_INFO.get(shop_type, {})
+
+        frame = self._shop_info_inner
+        for w in frame.winfo_children():
+            w.destroy()
+
+        pad = 20
+
+        def section_header(text: str):
+            tk.Label(frame, text=text,
+                     font=("Georgia", 12, "bold"),
+                     bg=c["bg"], fg=c["accent"]).pack(anchor="w", padx=pad, pady=(16, 2))
+            ttk.Separator(frame, orient="horizontal").pack(fill="x", padx=pad, pady=(0, 8))
+
+        def info_row(label: str, value: str, value_fg: str | None = None):
+            row = tk.Frame(frame, bg=c["bg"])
+            row.pack(fill="x", padx=pad + 4, pady=2)
+            row.columnconfigure(1, weight=1)
+            tk.Label(row, text=f"{label}:", width=16, anchor="nw",
+                     bg=c["bg"], fg=c["accent"],
+                     font=("Georgia", 9, "bold")).grid(row=0, column=0, sticky="nw")
+            tk.Label(row, text=value, anchor="nw",
+                     bg=c["bg"], fg=value_fg or c["fg"],
+                     font=("Georgia", 10), justify="left",
+                     wraplength=520).grid(row=0, column=1, sticky="nw")
+
+        # ── Shop Overview ──────────────────────────────────────────────────────
+        section_header("Shop Overview")
+        info_row("Name",      shop_name)
+        info_row("Type",      shop_type)
+        info_row("City Size", city_size)
+        info_row("Wealth",    wealth)
+        info_row("Items",     str(len(self.current_items)))
+
+        # ── Description ───────────────────────────────────────────────────────
+        if info.get("description"):
+            section_header("About This Shop")
+            desc_lbl = tk.Label(frame, text=info["description"],
+                                bg=c["bg"], fg=c["fg"],
+                                font=("Georgia", 10, "italic"),
+                                wraplength=600, justify="left")
+            desc_lbl.pack(anchor="w", padx=pad + 4, pady=(0, 6))
+
+            def _update_desc_wrap(e, lbl=desc_lbl):
+                lbl.configure(wraplength=max(200, e.width - pad * 2 - 8))
+            frame.bind("<Configure>", _update_desc_wrap)
+
+        # ── Shopkeeper ────────────────────────────────────────────────────────
+        sk_name = self.shopkeeper_name_var.get().strip()
+        if sk_name:
+            section_header("Shopkeeper")
+            info_row("Name",        sk_name)
+            if self.shopkeeper_race_var.get().strip():
+                info_row("Race",        self.shopkeeper_race_var.get().strip())
+            if self.shopkeeper_personality_var.get().strip():
+                info_row("Personality", self.shopkeeper_personality_var.get().strip())
+            if self.shopkeeper_appearance_var.get().strip():
+                info_row("Appearance",  self.shopkeeper_appearance_var.get().strip())
+
+        # ── Services ──────────────────────────────────────────────────────────
+        services = info.get("services", [])
+        if services:
+            section_header("Services Offered")
+            for svc_name, svc_desc, svc_cost in services:
+                svc_block = tk.Frame(frame, bg=c["bg"])
+                svc_block.pack(fill="x", padx=pad, pady=(2, 8))
+                svc_block.columnconfigure(0, weight=1)
+
+                # Service name header
+                tk.Label(svc_block, text=f"• {svc_name}",
+                         anchor="w",
+                         bg=c["bg"], fg=c["accent"],
+                         font=("Georgia", 10, "bold")).grid(row=0, column=0, sticky="w")
+
+                # Description
+                if svc_desc:
+                    tk.Label(svc_block, text=svc_desc,
+                             anchor="nw",
+                             bg=c["bg"], fg=c["fg"],
+                             font=("Georgia", 10),
+                             wraplength=520, justify="left").grid(row=1, column=0, sticky="w", padx=(14, 0))
+
+                # Cost — shown in gold only when present
+                if svc_cost:
+                    cost_row = tk.Frame(svc_block, bg=c["bg"])
+                    cost_row.grid(row=2, column=0, sticky="w", padx=(14, 0), pady=(1, 0))
+                    tk.Label(cost_row, text="Cost: ",
+                             bg=c["bg"], fg="#ff9900",
+                             font=("Georgia", 9, "bold")).pack(side="left")
+                    tk.Label(cost_row, text=svc_cost,
+                             bg=c["bg"], fg="#ff9900",
+                             font=("Georgia", 9)).pack(side="left")
+
+        # Spacer at bottom
+        tk.Frame(frame, bg=c["bg"], height=20).pack()
+
     def _clear_shopkeeper(self):
         """Clear all shopkeeper fields."""
         self.shopkeeper_name_var.set("")
         self.shopkeeper_race_var.set("")
         self.shopkeeper_personality_var.set("")
         self.shopkeeper_appearance_var.set("")
+        self._refresh_shop_info()
 
     def _generate_shopkeeper(self):
         """Randomly fill shopkeeper fields using the pool data (respects custom race list)."""
         sk = generate_shopkeeper(self.current_shop_type.get())
-        # Override race with custom pool if populated
         if self._custom_races:
             sk["race"] = random.choice(self._custom_races)
         self.shopkeeper_name_var.set(sk["name"])
         self.shopkeeper_race_var.set(sk["race"])
         self.shopkeeper_personality_var.set(sk["personality"])
-        # Append quirk to appearance for a bit more flavour
-        full_appearance = f"{sk['appearance']}. {sk['quirk']}"
-        self.shopkeeper_appearance_var.set(full_appearance)
+        self.shopkeeper_appearance_var.set(f"{sk['appearance']}. {sk['quirk']}")
+        self._refresh_shop_info()
 
     # ── App Settings Window (gear icon) ───────────────────────────────────────
     def _open_app_settings_window(self):
@@ -2733,10 +2951,6 @@ class ShopApp(tk.Tk):
         tk.Label(hdr, text="Tag Filters",
                  font=("Georgia", 11, "bold"),
                  bg=c["bg"], fg=c["accent"]).pack(side="left")
-        tk.Label(hdr,
-                 text="Click once to include (✓), again to exclude (✗), again to clear.",
-                 bg=c["bg"], fg=c["fg"],
-                 font=("Georgia", 8, "italic")).pack(side="left", padx=(10, 0))
         ttk.Button(hdr, text="✕ Clear All",
                    command=self._clear_tag_filters).pack(side="right")
         ttk.Button(hdr, text="☑ Include All",
@@ -3119,6 +3333,8 @@ class ShopApp(tk.Tk):
         excl    = self.excluded_tag_filters or set()
         incl    = self.active_tag_filters   or set()
 
+        exclude_homebrew = self.exclude_homebrew_var.get()
+
         def _pool_filter(x: dict) -> bool:
             if x["Name"] in existing_names:
                 return False
@@ -3128,9 +3344,10 @@ class ShopApp(tk.Tk):
             if incl and not (item_tags & incl):
                 return False
             if self.mundane_only_var.get():
-                r = normalize_rarity(x.get("Rarity", ""))
-                if r not in ("mundane", "none", "common", ""):
+                if normalize_rarity(x.get("Rarity", "")) not in ("mundane", "none", "common", ""):
                     return False
+            if exclude_homebrew and x.get("Source", "") in _TGS_SOURCES:
+                return False
             return True
 
         # Build a pool of same-rarity candidates not already in the shop
@@ -3143,33 +3360,8 @@ class ShopApp(tk.Tk):
         if not pool:
             return
 
-        chosen = random.choice(pool)
-        rarity_raw = chosen.get("Rarity", "")
-        mkt = generate_market_price(rarity_raw)
-        new_item = {
-            "item_id":      chosen.get("Item ID", ""),
-            "name":         chosen.get("Name", ""),
-            "rarity":       rarity_raw,
-            "item_type":    chosen.get("Type", ""),
-            "source":       chosen.get("Source", ""),
-            "page":         chosen.get("Page", ""),
-            "cost_given":   chosen.get("Value", ""),
-            "quantity":     str(generate_item_quantity(
-                                chosen,
-                                self.city_size_var.get(),
-                                self.wealth_var.get())),
-            "locked":       False,
-            "attunement":   chosen.get("Attunement", ""),
-            "damage":       chosen.get("Damage", ""),
-            "properties":   chosen.get("Properties", ""),
-            "mastery":      chosen.get("Mastery", ""),
-            "weight":       chosen.get("Weight", ""),
-            "tags":         chosen.get("Tags", ""),
-            "description":  chosen.get("Text", ""),
-            "table_data":   chosen.get("Table", ""),
-            "sane_cost":    chosen.get("Sane_Cost", ""),
-            "market_price": str(mkt) if mkt is not None else "",
-        }
+        chosen   = random.choice(pool)
+        new_item = _raw_to_shop_item(chosen, self.city_size_var.get(), self.wealth_var.get())
 
         # Swap in place to preserve list order
         for idx, i in enumerate(self.current_items):
@@ -3204,8 +3396,10 @@ class ShopApp(tk.Tk):
             tag_excludes=self.excluded_tag_filters if self.excluded_tag_filters else None,
             city_size=self.city_size_var.get(),
             wealth=self.wealth_var.get(),
-            mundane_only=self.mundane_only_var.get())
+            mundane_only=self.mundane_only_var.get(),
+            exclude_homebrew=self.exclude_homebrew_var.get())
         self._populate_table(self.current_items)
+        self._refresh_shop_info()
         self.status_var.set(
             f"✔  Generated {len(self.current_items)} items for {shop_type}  "
             f"({self.city_size_var.get()} / {self.wealth_var.get()})"
@@ -3228,9 +3422,11 @@ class ShopApp(tk.Tk):
             tag_excludes=self.excluded_tag_filters if self.excluded_tag_filters else None,
             city_size=self.city_size_var.get(),
             wealth=self.wealth_var.get(),
-            mundane_only=self.mundane_only_var.get())
+            mundane_only=self.mundane_only_var.get(),
+            exclude_homebrew=self.exclude_homebrew_var.get())
         self.current_items = new_items
         self._populate_table(self.current_items)
+        self._refresh_shop_info()
         self.status_var.set(
             f"↻  Rerolled ~{int(pct*100)}% of unlocked items ({n_reroll} swapped)"
         )
@@ -4063,30 +4259,9 @@ class ShopApp(tk.Tk):
             return
 
         # Convert raw CSV dict to the inspector's expected shape, flag as gallery
-        rarity_raw = raw.get("Rarity", "")
-        mkt = generate_market_price(rarity_raw)
-        item = {
-            "name":         raw.get("Name", ""),
-            "rarity":       rarity_raw,
-            "item_type":    raw.get("Type", ""),
-            "source":       raw.get("Source", ""),
-            "page":         raw.get("Page", ""),
-            "item_id":      raw.get("Item ID", ""),
-            "cost_given":   raw.get("Value", ""),
-            "attunement":   raw.get("Attunement", ""),
-            "damage":       raw.get("Damage", ""),
-            "properties":   raw.get("Properties", ""),
-            "mastery":      raw.get("Mastery", ""),
-            "weight":       raw.get("Weight", ""),
-            "tags":         raw.get("Tags", ""),
-            "description":  raw.get("Text", ""),
-            "table_data":   raw.get("Table", ""),
-            "quantity":     "",
-            "locked":       False,
-            "_gallery":     True,   # suppresses the Reroll button
-            "sane_cost":    raw.get("Sane_Cost", ""),
-            "market_price": str(mkt) if mkt is not None else "",
-        }
+        item = _raw_to_shop_item(raw)
+        item["quantity"] = ""
+        item["_gallery"] = True   # suppresses the Reroll button
 
         for w in self.gallery_inspect_frame.winfo_children():
             w.destroy()
