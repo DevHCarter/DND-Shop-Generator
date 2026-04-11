@@ -1,6 +1,7 @@
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 import csv
+import ctypes
 import json
 import math
 import sqlite3
@@ -122,10 +123,17 @@ def culture_match(item: dict, active_culture: str | None) -> bool:
 
 # ── Paths ──────────────────────────────────────────────────────────────────────
 BASE_DIR  = Path(__file__).parent
-DATA_DIR  = BASE_DIR / "shop_data"
+DATA_DIR  = BASE_DIR / "data"
 DATA_DIR.mkdir(exist_ok=True)
 DB_PATH    = DATA_DIR / "shops.db"
-PREFS_PATH = DATA_DIR / "prefs.json"
+
+# ── Custom font registration ───────────────────────────────────────────────────
+_TITLE_FONT = "Jacquard 24"
+try:
+    ctypes.windll.gdi32.AddFontResourceExW(
+        str(DATA_DIR / "Jacquard24-Regular.ttf"), 0x10, 0)
+except Exception:
+    _TITLE_FONT = "Georgia"   # fallback if registration fails
 
 # Single master CSV — all items with Shop_Pools column
 MASTER_CSV = BASE_DIR / "Items_Beta_1.csv"
@@ -780,6 +788,10 @@ def init_db():
                 action      TEXT DEFAULT 'sold',
                 timestamp   TEXT DEFAULT (datetime('now'))
             );
+            CREATE TABLE IF NOT EXISTS preferences (
+                key   TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
         """)
         con.commit()
     except sqlite3.OperationalError:
@@ -1056,6 +1068,56 @@ SHOP_INFO: dict[str, dict] = {
     },
 }
 
+# ── General world cost tables ─────────────────────────────────────────────────
+# Each entry: name, description, rows (list of (tier, desc, cost) tuples)
+GENERAL_INFO: list[dict] = [
+    {
+        "name": "Inn & Lodging",
+        "description": "Nightly room rate, including a bed and basic security for belongings.",
+        "rows": [
+            ("Squalid",      "Cot in a common room; vermin likely.",           "7 cp / night"),
+            ("Poor",         "Small private room, thin walls.",                 "1 sp / night"),
+            ("Modest",       "Clean room, basic amenities.",                    "5 sp / night"),
+            ("Comfortable",  "Furnished room, locking door.",                   "8 sp / night"),
+            ("Wealthy",      "Well-appointed room, attentive staff.",           "2 gp / night"),
+            ("Aristocratic", "Suite with fine furnishings, full service.",      "4 gp / night"),
+        ],
+    },
+    {
+        "name": "Meals",
+        "description": "Cost of a single meal from a tavern or inn kitchen, by quality.",
+        "rows": [
+            ("Squalid",      "Stale bread, watered gruel.",                    "3 cp"),
+            ("Poor",         "Cold meat, bread, and thin ale.",                "6 cp"),
+            ("Modest",       "Hot stew, fresh bread, house ale.",              "3 sp"),
+            ("Comfortable",  "Roasted meat, vegetables, decent wine.",         "5 sp"),
+            ("Wealthy",      "Multiple courses, quality wine.",                "8 sp"),
+            ("Aristocratic", "Fine cuisine, rare vintages.",                   "2 gp"),
+        ],
+    },
+    {
+        "name": "Travel & Transport",
+        "description": "Common costs for overland and sea travel.",
+        "rows": [
+            ("Horse (hire)",      "Riding horse, short or local travel.",       "2 gp / day  +  deposit"),
+            ("Carriage (coach)",  "Passenger coach between settlements.",        "3 cp / mile"),
+            ("Ship Passage",      "Berth aboard a merchant vessel.",            "1 sp / mile"),
+            ("Messenger",         "Letter delivery within a city.",             "2 cp"),
+            ("Messenger (long)",  "Cross-district or inter-city delivery.",     "1 – 2 sp"),
+        ],
+    },
+    {
+        "name": "Hired Labour",
+        "description": "Daily wages for hired help, per person.",
+        "rows": [
+            ("Unskilled",   "Labourer, porter, or general hand.",              "2 sp / day"),
+            ("Skilled",     "Artisan, guide, or trained specialist.",          "2 gp / day"),
+            ("Mercenary",   "Armed escort.",                                   "2 gp / day"),
+            ("Spellcaster", "Minor magical assistance.",                       "Negotiated"),
+        ],
+    },
+]
+
 
 class ToolTip:
     """Simple hover tooltip for any tkinter widget."""
@@ -1088,15 +1150,19 @@ class ToolTip:
 class ShopApp(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("ShopWrite")
+        self.title("Shopwright")
         self.geometry("1380x860")
         self.minsize(1100, 700)
-        saved_theme   = "dark"
-        saved_session = "1"
+        saved_theme            = "dark"
+        saved_session          = "1"
+        saved_include_homebrew = "0"
         try:
-            _prefs        = json.loads(PREFS_PATH.read_text())
-            saved_theme   = _prefs.get("theme",   "dark")
-            saved_session = _prefs.get("session",  "1")
+            con = sqlite3.connect(DB_PATH)
+            _prefs = {r[0]: r[1] for r in con.execute("SELECT key, value FROM preferences").fetchall()}
+            con.close()
+            saved_theme            = _prefs.get("theme",            "dark")
+            saved_session          = _prefs.get("session",           "1")
+            saved_include_homebrew = _prefs.get("include_homebrew",  "0")
         except Exception:
             pass
         self.theme_mode           = tk.StringVar(value=saved_theme)
@@ -1118,7 +1184,7 @@ class ShopApp(tk.Tk):
         self.price_modifier    = tk.IntVar(value=100)
         self._inspect_expanded = False   # whether inspector is in focus mode
         self.mundane_only_var    = tk.BooleanVar(value=False)  # mundane-only mode
-        self.exclude_homebrew_var = tk.BooleanVar(value=False) # exclude TGS1-5 items
+        self.exclude_homebrew_var = tk.BooleanVar(value=(saved_include_homebrew == "0"))  # True = exclude homebrew
 
         # Table display column toggles
         self.show_qty_col      = tk.BooleanVar(value=True)
@@ -1181,6 +1247,18 @@ class ShopApp(tk.Tk):
         self._build_ui()
         self._refresh_campaign_list()
 
+        # ── Draft auto-save traces ─────────────────────────────────────────────
+        for _v in (self.shop_name_var, self.current_shop_type,
+                   self.city_size_var, self.wealth_var, self.culture_var):
+            _v.trace_add("write", lambda *_: self._autosave_draft())
+        self.price_modifier.trace_add("write", lambda *_: self._autosave_draft())
+        for _v in (self.shopkeeper_name_var, self.shopkeeper_race_var,
+                   self.shopkeeper_personality_var, self.shopkeeper_appearance_var):
+            _v.trace_add("write", lambda *_: self._autosave_draft())
+
+        # Show startup restore prompt after the event loop starts
+        self.after(0, self._show_draft_prompt)
+
     # ── Theme ─────────────────────────────────────────────────────────────────
     def _apply_theme(self, mode: str = "dark"):
         style = ttk.Style(self)
@@ -1239,7 +1317,13 @@ class ShopApp(tk.Tk):
         style.map("Treeview",
                   background=[("selected", accent)],
                   foreground=[("selected", btn_fg)])
-        style.configure("TCombobox", fieldbackground=sel, background=sel, foreground=fg)
+        style.configure("TCombobox", fieldbackground=sel, background=sel, foreground=fg,
+                        selectbackground=sel, selectforeground=fg)
+        style.map("TCombobox",
+                  fieldbackground=[("readonly", sel), ("disabled", bg)],
+                  foreground=[("readonly", fg), ("disabled", fg)],
+                  selectbackground=[("readonly", sel)],
+                  selectforeground=[("readonly", fg)])
         style.configure("TScale",  background=bg, troughcolor=sel)
         style.configure("TEntry",  fieldbackground=sel, foreground=fg, insertcolor=fg)
         style.configure("TSeparator", background=accent)
@@ -1279,10 +1363,13 @@ class ShopApp(tk.Tk):
 
     def _save_prefs(self):
         try:
-            PREFS_PATH.write_text(json.dumps({
-                "theme":   self.theme_mode.get(),
-                "session": self.current_session_var.get(),
-            }))
+            con = sqlite3.connect(DB_PATH)
+            con.executemany(
+                "INSERT OR REPLACE INTO preferences (key, value) VALUES (?, ?)",
+                [("theme", self.theme_mode.get()), ("session", self.current_session_var.get())]
+            )
+            con.commit()
+            con.close()
         except Exception:
             pass
 
@@ -1383,8 +1470,8 @@ class ShopApp(tk.Tk):
         top = tk.Frame(self, bg=c["hdr"], pady=6)
         top.pack(fill="x")
 
-        tk.Label(top, text="《 Shop᛭Wright 》",
-                 font=("Georgia", 15, "bold"),
+        tk.Label(top, text="Shopwright",
+                 font=(_TITLE_FONT, 26),
                  bg=c["hdr"], fg=c["accent"]).pack(side="left", padx=14)
 
         tk.Label(top, text="Name:", bg=c["hdr"], fg=c["fg"],
@@ -1534,8 +1621,8 @@ class ShopApp(tk.Tk):
         left.pack(side="left", fill="both", expand=True, padx=10, pady=10)
 
         # Header
-        tk.Label(left, text="◈  Sell Item Lookup",
-                 font=("Georgia", 12, "bold"),
+        tk.Label(left, text=" Sell Item ",
+                 font=(("Georgia", 14, "bold")),
                  bg=c["bg"], fg=c["accent"]).pack(anchor="w", pady=(0, 8))
 
         # Search bar
@@ -1644,7 +1731,7 @@ class ShopApp(tk.Tk):
         # ── Name ──
         tk.Label(self.sell_panel, text=item.get("Name", ""),
                  bg=c["hdr"], fg=rcolor,
-                 font=("Georgia", 12, "bold"),
+                 font=(("Georgia"), 14),
                  wraplength=wrap, justify="left").pack(anchor="w", pady=(0, 4))
         ttk.Separator(self.sell_panel).pack(fill="x", pady=4)
 
@@ -1701,6 +1788,39 @@ class ShopApp(tk.Tk):
         self.sell_offer_disp.pack(anchor="w", pady=(2, 0))
 
         self._update_sell_offer()
+
+        # ── Log: Player Sold Item ──────────────────────────────────────────────
+        ttk.Separator(self.sell_panel).pack(fill="x", pady=(10, 6))
+
+        tk.Label(self.sell_panel, text="Log to Transaction:",
+                 bg=c["hdr"], fg=c["fg"],
+                 font=("Georgia", 9, "bold")).pack(anchor="w", pady=(0, 4))
+
+        qty_row = tk.Frame(self.sell_panel, bg=c["hdr"])
+        qty_row.pack(fill="x", pady=(0, 3))
+        tk.Label(qty_row, text="Qty:", bg=c["hdr"], fg=c["fg"],
+                 font=("Georgia", 9), width=8, anchor="w").pack(side="left")
+        self._sell_log_qty_var = tk.IntVar(value=1)
+        tk.Spinbox(qty_row, from_=1, to=999, textvariable=self._sell_log_qty_var,
+                   width=6, bg=c["sel"], fg=c["fg"],
+                   buttonbackground=c["sel"], relief="flat",
+                   font=("Georgia", 9)).pack(side="left")
+
+        price_row = tk.Frame(self.sell_panel, bg=c["hdr"])
+        price_row.pack(fill="x", pady=(0, 6))
+        tk.Label(price_row, text="Price:", bg=c["hdr"], fg=c["fg"],
+                 font=("Georgia", 9), width=8, anchor="w").pack(side="left")
+        self._sell_log_price_var = tk.StringVar(value="")
+        tk.Entry(price_row, textvariable=self._sell_log_price_var,
+                 width=12, bg=c["sel"], fg=c["fg"],
+                 insertbackground=c["fg"], relief="flat",
+                 font=("Georgia", 9)).pack(side="left")
+        tk.Label(price_row, text="blank = offer price",
+                 bg=c["hdr"], fg=c["fg"],
+                 font=("Georgia", 7, "italic")).pack(side="left", padx=(5, 0))
+
+        ttk.Button(self.sell_panel, text="📋  Log: Player Sold Item",
+                   command=self._log_player_sale).pack(anchor="w", pady=(0, 10))
 
         # ── Description (same style as inspector) ──
         desc       = item.get("Text", "")
@@ -1786,6 +1906,40 @@ class ShopApp(tk.Tk):
         offer = max(0.01, float(buy_p) * pct / 100)
         if hasattr(self, "sell_offer_disp"):
             self.sell_offer_disp.configure(text=format_currency(offer))
+
+    def _log_player_sale(self):
+        if not self.sell_selected_item:
+            return
+        item  = self.sell_selected_item["item"]
+        buy_p = self.sell_selected_item["buy_price"]
+
+        qty      = getattr(self, "_sell_log_qty_var",   tk.IntVar(value=1)).get()
+        price_ov = getattr(self, "_sell_log_price_var", tk.StringVar()).get().strip()
+
+        if price_ov:
+            price = price_ov
+        else:
+            pct   = int(self.sell_pct_var.get())
+            offer = max(0.01, float(buy_p) * pct / 100)
+            price = format_currency(offer)
+
+        shop_name   = self.shop_name_var.get().strip() or "Unknown Shop"
+        session_tag = f"Session {self.current_session_var.get().strip() or '1'}"
+
+        con = sqlite3.connect(DB_PATH)
+        con.execute(
+            "INSERT INTO transactions "
+            "(shop_name, item_name, rarity, quantity, price, session_tag, action) "
+            "VALUES (?,?,?,?,?,?,'player_sold')",
+            (shop_name, item.get("Name", ""), item.get("Rarity", ""),
+             qty, price, session_tag))
+        con.commit()
+        con.close()
+
+        if hasattr(self, "log_tree"):
+            self._refresh_log()
+        self.status_var.set(
+            f"📋 Logged: Player sold {qty}× '{item.get('Name', '')}' for {price}")
 
     # ── Action Tab ────────────────────────────────────────────────────────────
     def _build_action_tab(self):
@@ -1904,7 +2058,7 @@ class ShopApp(tk.Tk):
         hdr_row.pack(fill="x", padx=8, pady=(10, 0))
 
         tk.Label(hdr_row, text="◈  Item Inspector",
-                 font=("Georgia", 11, "bold"),
+                 font=("Georgia", 13),
                  bg=c["hdr"], fg=c["accent"]).pack(side="left")
 
         self.expand_btn = tk.Label(
@@ -2173,23 +2327,20 @@ class ShopApp(tk.Tk):
         except (ValueError, TypeError):
             current_qty = 1
 
-        qty_var = tk.IntVar(value=current_qty)
-        qty_lbl = tk.Label(qty_frame, textvariable=qty_var, width=4,
-                           bg=c["sel"], fg=c["fg"],
-                           font=("Georgia", 11, "bold"),
-                           anchor="center", relief="flat")
+        qty_var = tk.StringVar(value=str(current_qty))
 
-        def _change(delta: int):
-            new_val = max(0, qty_var.get() + delta)
-            qty_var.set(new_val)
+        def _apply(*_):
+            try:
+                new_val = max(0, int(qty_var.get()))
+            except (ValueError, TypeError):
+                new_val = 1
+            qty_var.set(str(new_val))
             item["quantity"] = str(new_val)
-            # Find and update in current_items by name
             for shop_item in self.current_items:
                 if shop_item["name"] == item["name"]:
                     shop_item["quantity"] = str(new_val)
                     break
             if new_val == 0:
-                # Auto-remove item from shop
                 self.current_items = [i for i in self.current_items
                                       if i["name"] != item["name"]]
                 self._populate_table(self.current_items)
@@ -2198,24 +2349,18 @@ class ShopApp(tk.Tk):
                 self._clear_inspect()
             else:
                 self._populate_table(self.current_items)
-                # Re-select row so inspector stays showing the item
                 if item["name"] in self.tree.get_children():
                     self.tree.selection_set(item["name"])
 
-        btn_minus = tk.Button(qty_frame, text="−", width=2,
-                              bg=c["sel"], fg=c["fg"],
-                              activebackground=c["hdr"], activeforeground=c["accent"],
-                              relief="flat", font=("Georgia", 10, "bold"),
-                              cursor="hand2", command=lambda: _change(-1))
-        btn_plus  = tk.Button(qty_frame, text="＋", width=2,
-                              bg=c["sel"], fg=c["fg"],
-                              activebackground=c["hdr"], activeforeground=c["accent"],
-                              relief="flat", font=("Georgia", 10, "bold"),
-                              cursor="hand2", command=lambda: _change(1))
-
-        btn_minus.pack(side="left", padx=(0, 2))
-        qty_lbl.pack(side="left", padx=2)
-        btn_plus.pack(side="left", padx=(2, 0))
+        spinbox = tk.Spinbox(qty_frame, from_=0, to=999, textvariable=qty_var,
+                             width=5, bg=c["sel"], fg=c["fg"],
+                             buttonbackground=c["sel"],
+                             insertbackground=c["fg"],
+                             relief="flat", font=("Georgia", 11),
+                             command=_apply)
+        spinbox.pack(side="left")
+        spinbox.bind("<Return>", _apply)
+        spinbox.bind("<FocusOut>", _apply)
 
     def _render_inspect_collapsed(self, item: dict):
         c = self.colors
@@ -2808,123 +2953,207 @@ class ShopApp(tk.Tk):
         vsb.pack(side="right", fill="y")
         canvas.pack(side="left", fill="both", expand=True)
 
+        self._shop_info_canvas = canvas
+        self._shop_info_wrap_labels: list = []
         self._shop_info_inner = tk.Frame(canvas, bg=c["bg"])
         _win = canvas.create_window((0, 0), window=self._shop_info_inner, anchor="nw")
 
         def _on_configure(e):
-            canvas.configure(scrollregion=canvas.bbox("all"))
+            bbox = canvas.bbox("all")
+            if bbox:
+                canvas.configure(scrollregion=(0, 0, bbox[2], bbox[3]))
+            new_wrap = max(200, e.width - 68)
+            for lbl in self._shop_info_wrap_labels:
+                try:
+                    lbl.configure(wraplength=new_wrap)
+                except tk.TclError:
+                    pass
+
         def _on_canvas_resize(e):
             canvas.itemconfig(_win, width=e.width)
         self._shop_info_inner.bind("<Configure>", _on_configure)
         canvas.bind("<Configure>", _on_canvas_resize)
 
-        # Initial placeholder
-        tk.Label(self._shop_info_inner,
-                 text="Generate a shop to see its info here.",
-                 bg=c["bg"], fg=c["fg"],
-                 font=("Georgia", 10, "italic")).pack(padx=20, pady=20)
+        self._refresh_shop_info()
 
     def _refresh_shop_info(self):
         """Rebuild the Shop Info tab contents to reflect the current shop state."""
-        c          = self.colors
-        shop_type  = self.current_shop_type.get()
-        city_size  = self.city_size_var.get()
-        wealth     = self.wealth_var.get()
-        shop_name  = self.shop_name_var.get() or f"{shop_type} Shop"
-        info       = SHOP_INFO.get(shop_type, {})
+        c         = self.colors
+        shop_type = self.current_shop_type.get()
+        city_size = self.city_size_var.get()
+        wealth    = self.wealth_var.get()
+        shop_name = self.shop_name_var.get() or f"{shop_type} Shop"
+        info      = SHOP_INFO.get(shop_type, {})
 
         frame = self._shop_info_inner
         for w in frame.winfo_children():
             w.destroy()
+        self._shop_info_canvas.yview_moveto(0)
+        self._shop_info_wrap_labels.clear()
 
-        pad = 20
+        pad = 14
+        _wrap_labels = self._shop_info_wrap_labels
 
-        def section_header(text: str):
-            tk.Label(frame, text=text,
-                     font=("Georgia", 12, "bold"),
-                     bg=c["bg"], fg=c["accent"]).pack(anchor="w", padx=pad, pady=(16, 2))
-            ttk.Separator(frame, orient="horizontal").pack(fill="x", padx=pad, pady=(0, 8))
+        # ── Active Shop Card (compact) ─────────────────────────────────────────
+        card = tk.Frame(frame, bg=c["hdr"])
+        card.pack(fill="x", padx=pad, pady=(pad, 6))
+        inner = tk.Frame(card, bg=c["hdr"])
+        inner.pack(fill="x", padx=12, pady=(10, 12))
 
-        def info_row(label: str, value: str, value_fg: str | None = None):
-            row = tk.Frame(frame, bg=c["bg"])
-            row.pack(fill="x", padx=pad + 4, pady=2)
-            row.columnconfigure(1, weight=1)
-            tk.Label(row, text=f"{label}:", width=16, anchor="nw",
-                     bg=c["bg"], fg=c["accent"],
-                     font=("Georgia", 9, "bold")).grid(row=0, column=0, sticky="nw")
-            tk.Label(row, text=value, anchor="nw",
-                     bg=c["bg"], fg=value_fg or c["fg"],
-                     font=("Georgia", 10), justify="left",
-                     wraplength=520).grid(row=0, column=1, sticky="nw")
+        # Name row + meta badges
+        hdr_row = tk.Frame(inner, bg=c["hdr"])
+        hdr_row.pack(fill="x")
+        hdr_row.columnconfigure(0, weight=1)
+        tk.Label(hdr_row, text=shop_name,
+                 font=("Georgia", 13, "bold"),
+                 bg=c["hdr"], fg=c["accent"],
+                 anchor="w").grid(row=0, column=0, sticky="w")
+        badges = tk.Frame(hdr_row, bg=c["hdr"])
+        badges.grid(row=0, column=1, sticky="e")
+        n = len(self.current_items)
+        for badge in [shop_type, city_size, wealth, f"{n} item{'s' if n != 1 else ''}"]:
+            tk.Label(badges, text=badge,
+                     font=("Georgia", 8),
+                     bg=c["sel"], fg=c["fg"],
+                     padx=5, pady=1).pack(side="left", padx=2)
 
-        # ── Shop Overview ──────────────────────────────────────────────────────
-        section_header("Shop Overview")
-        info_row("Name",      shop_name)
-        info_row("Type",      shop_type)
-        info_row("City Size", city_size)
-        info_row("Wealth",    wealth)
-        info_row("Items",     str(len(self.current_items)))
-
-        # ── Description ───────────────────────────────────────────────────────
+        # Description (compact italic)
         if info.get("description"):
-            section_header("About This Shop")
-            desc_lbl = tk.Label(frame, text=info["description"],
-                                bg=c["bg"], fg=c["fg"],
-                                font=("Georgia", 10, "italic"),
-                                wraplength=600, justify="left")
-            desc_lbl.pack(anchor="w", padx=pad + 4, pady=(0, 6))
+            desc_lbl = tk.Label(inner, text=info["description"],
+                                font=("Georgia", 9, "italic"),
+                                bg=c["hdr"], fg=c["fg"],
+                                justify="left", anchor="nw", wraplength=600)
+            desc_lbl.pack(anchor="w", pady=(6, 2))
+            _wrap_labels.append(desc_lbl)
 
-            def _update_desc_wrap(e, lbl=desc_lbl):
-                lbl.configure(wraplength=max(200, e.width - pad * 2 - 8))
-            frame.bind("<Configure>", _update_desc_wrap)
-
-        # ── Shopkeeper ────────────────────────────────────────────────────────
+        # Shopkeeper (inline compact)
         sk_name = self.shopkeeper_name_var.get().strip()
         if sk_name:
-            section_header("Shopkeeper")
-            info_row("Name",        sk_name)
+            parts = [sk_name]
             if self.shopkeeper_race_var.get().strip():
-                info_row("Race",        self.shopkeeper_race_var.get().strip())
+                parts.append(self.shopkeeper_race_var.get().strip())
             if self.shopkeeper_personality_var.get().strip():
-                info_row("Personality", self.shopkeeper_personality_var.get().strip())
+                parts.append(self.shopkeeper_personality_var.get().strip())
             if self.shopkeeper_appearance_var.get().strip():
-                info_row("Appearance",  self.shopkeeper_appearance_var.get().strip())
+                parts.append(self.shopkeeper_appearance_var.get().strip())
+            sk_row = tk.Frame(inner, bg=c["hdr"])
+            sk_row.pack(anchor="w", pady=(4, 2))
+            tk.Label(sk_row, text="Shopkeeper: ",
+                     font=("Georgia", 9, "bold"),
+                     bg=c["hdr"], fg=c["accent"]).pack(side="left")
+            tk.Label(sk_row, text="  •  ".join(parts),
+                     font=("Georgia", 9),
+                     bg=c["hdr"], fg=c["fg"]).pack(side="left")
 
-        # ── Services ──────────────────────────────────────────────────────────
+        # Services (name + cost only, compact)
         services = info.get("services", [])
         if services:
-            section_header("Services Offered")
-            for svc_name, svc_desc, svc_cost in services:
-                svc_block = tk.Frame(frame, bg=c["bg"])
-                svc_block.pack(fill="x", padx=pad, pady=(2, 8))
-                svc_block.columnconfigure(0, weight=1)
-
-                # Service name header
-                tk.Label(svc_block, text=f"• {svc_name}",
-                         anchor="w",
-                         bg=c["bg"], fg=c["accent"],
-                         font=("Georgia", 10, "bold")).grid(row=0, column=0, sticky="w")
-
-                # Description
-                if svc_desc:
-                    tk.Label(svc_block, text=svc_desc,
-                             anchor="nw",
-                             bg=c["bg"], fg=c["fg"],
-                             font=("Georgia", 10),
-                             wraplength=520, justify="left").grid(row=1, column=0, sticky="w", padx=(14, 0))
-
-                # Cost — shown in gold only when present
+            tk.Label(inner, text="Services Offered",
+                     font=("Georgia", 9, "bold"),
+                     bg=c["hdr"], fg=c["accent"]).pack(anchor="w", pady=(8, 2))
+            for svc_name, _, svc_cost in services:
+                svc_row = tk.Frame(inner, bg=c["hdr"])
+                svc_row.pack(fill="x", padx=(8, 0), pady=1)
+                svc_row.columnconfigure(0, weight=1)
+                tk.Label(svc_row, text=f"• {svc_name}",
+                         font=("Georgia", 9),
+                         bg=c["hdr"], fg=c["fg"],
+                         anchor="w").grid(row=0, column=0, sticky="w")
                 if svc_cost:
-                    cost_row = tk.Frame(svc_block, bg=c["bg"])
-                    cost_row.grid(row=2, column=0, sticky="w", padx=(14, 0), pady=(1, 0))
-                    tk.Label(cost_row, text="Cost: ",
-                             bg=c["bg"], fg="#ff9900",
-                             font=("Georgia", 9, "bold")).pack(side="left")
-                    tk.Label(cost_row, text=svc_cost,
-                             bg=c["bg"], fg="#ff9900",
-                             font=("Georgia", 9)).pack(side="left")
+                    tk.Label(svc_row, text=svc_cost,
+                             font=("Georgia", 8, "bold"),
+                             bg=c["hdr"], fg="#ff9900",
+                             anchor="e").grid(row=0, column=1, sticky="e", padx=(8, 0))
 
-        # Spacer at bottom
+        # ── Other Shops ────────────────────────────────────────────────────────
+        other_shops = [(k, v) for k, v in SHOP_INFO.items() if k != shop_type]
+        if other_shops:
+            tk.Label(frame, text="Other Shops",
+                     font=("Georgia", 11, "bold"),
+                     bg=c["bg"], fg=c["accent"]).pack(anchor="w", padx=pad, pady=(12, 2))
+            ttk.Separator(frame, orient="horizontal").pack(fill="x", padx=pad, pady=(0, 6))
+
+            for shop_key, data in other_shops:
+                oc = tk.Frame(frame, bg=c["hdr"])
+                oc.pack(fill="x", padx=pad, pady=(0, 6))
+                oc_in = tk.Frame(oc, bg=c["hdr"])
+                oc_in.pack(fill="x", padx=10, pady=8)
+
+                tk.Label(oc_in, text=shop_key,
+                         font=("Georgia", 10, "bold"),
+                         bg=c["hdr"], fg=c["accent"],
+                         anchor="w").pack(anchor="w")
+
+                if data.get("description"):
+                    d_lbl = tk.Label(oc_in, text=data["description"],
+                                     font=("Georgia", 9, "italic"),
+                                     bg=c["hdr"], fg=c["fg"],
+                                     justify="left", anchor="nw", wraplength=600)
+                    d_lbl.pack(anchor="w", pady=(2, 4))
+                    _wrap_labels.append(d_lbl)
+
+                for svc_name, svc_desc, svc_cost in data.get("services", []):
+                    svc_outer = tk.Frame(oc_in, bg=c["hdr"])
+                    svc_outer.pack(fill="x", padx=(8, 0), pady=(2, 0))
+
+                    # Name + cost on same row
+                    name_row = tk.Frame(svc_outer, bg=c["hdr"])
+                    name_row.pack(fill="x")
+                    if svc_cost:
+                        tk.Label(name_row, text=svc_cost,
+                                 font=("Georgia", 8, "bold"),
+                                 bg=c["hdr"], fg="#ff9900").pack(side="right")
+                    tk.Label(name_row, text=f"• {svc_name}",
+                             font=("Georgia", 9, "bold"),
+                             bg=c["hdr"], fg=c["fg"]).pack(side="left")
+
+                    # Description below (smaller, indented)
+                    if svc_desc:
+                        s_lbl = tk.Label(svc_outer, text=f"  {svc_desc}",
+                                         font=("Georgia", 8, "italic"),
+                                         bg=c["hdr"], fg=c["fg"],
+                                         justify="left", anchor="nw", wraplength=580)
+                        s_lbl.pack(anchor="w")
+                        _wrap_labels.append(s_lbl)
+
+        # ── General World Costs ────────────────────────────────────────────────
+        tk.Label(frame, text="General World Costs",
+                 font=("Georgia", 11, "bold"),
+                 bg=c["bg"], fg=c["accent"]).pack(anchor="w", padx=pad, pady=(14, 2))
+        ttk.Separator(frame, orient="horizontal").pack(fill="x", padx=pad, pady=(0, 6))
+
+        for cat in GENERAL_INFO:
+            cat_f = tk.Frame(frame, bg=c["hdr"])
+            cat_f.pack(fill="x", padx=pad, pady=(0, 8))
+            cat_in = tk.Frame(cat_f, bg=c["hdr"])
+            cat_in.pack(fill="x", padx=10, pady=8)
+
+            tk.Label(cat_in, text=cat["name"],
+                     font=("Georgia", 10, "bold"),
+                     bg=c["hdr"], fg=c["accent"],
+                     anchor="w").pack(anchor="w")
+
+            if cat.get("description"):
+                tk.Label(cat_in, text=cat["description"],
+                         font=("Georgia", 9, "italic"),
+                         bg=c["hdr"], fg=c["fg"],
+                         justify="left", anchor="nw").pack(anchor="w", pady=(1, 6))
+
+            for tier, tier_desc, cost in cat.get("rows", []):
+                row_f = tk.Frame(cat_in, bg=c["hdr"])
+                row_f.pack(fill="x", pady=1)
+                row_f.columnconfigure(1, weight=1)
+                tk.Label(row_f, text=tier, width=14, anchor="w",
+                         font=("Georgia", 9, "bold"),
+                         bg=c["hdr"], fg=c["fg"]).grid(row=0, column=0, sticky="w")
+                tk.Label(row_f, text=tier_desc, anchor="w",
+                         font=("Georgia", 9),
+                         bg=c["hdr"], fg=c["fg"]).grid(row=0, column=1, sticky="w")
+                tk.Label(row_f, text=cost, anchor="e",
+                         font=("Georgia", 9, "bold"),
+                         bg=c["hdr"], fg="#ff9900").grid(row=0, column=2, sticky="e")
+
+        # Bottom spacer
         tk.Frame(frame, bg=c["bg"], height=20).pack()
 
     def _clear_shopkeeper(self):
@@ -3165,7 +3394,7 @@ class ShopApp(tk.Tk):
             ("💰 Sell Item",        _vis_sell_var),
             ("🕮 Item Gallery",      _vis_gallery_var),
             ("✦ Shopkeeper",         _vis_shopkeeper_var),
-            ("ℹ Shop Info",          _vis_shopinfo_var),
+            ("𝐢 Shop Info",          _vis_shopinfo_var),
             ("📜 Transaction Log",   _vis_log_var),
         ]:
             tk.Checkbutton(body, text=text, variable=var,
@@ -3240,8 +3469,8 @@ class ShopApp(tk.Tk):
         # Filter bar
         bar = tk.Frame(f, bg=c["hdr"], pady=6)
         bar.pack(fill="x")
-        tk.Label(bar, text="📜  Transaction Log",
-                 font=("Georgia", 13, "bold"),
+        tk.Label(bar, text="Transaction Log",
+                 font=("Georgia", 14, "bold"),
                  bg=c["hdr"], fg=c["accent"]).pack(side="left", padx=(10, 16))
 
         tk.Label(bar, text="Shop:", bg=c["hdr"], fg=c["fg"],
@@ -3282,6 +3511,7 @@ class ShopApp(tk.Tk):
         self.log_tree.configure(yscrollcommand=log_vsb.set)
         self.log_tree.pack(side="left", fill="both", expand=True)
         log_vsb.pack(side="right", fill="y")
+        self.log_tree.bind("<Button-3>", self._on_log_right_click)
 
         for rarity, color in self.rarity_colors.items():
             self.log_tree.tag_configure(rarity.replace(" ", "_"), foreground=color)
@@ -3301,6 +3531,128 @@ class ShopApp(tk.Tk):
 
         self._log_sort_col = "timestamp"
         self._log_sort_asc = False
+        self._build_log_context_menu()
+
+    # ── Log Context Menu ──────────────────────────────────────────────────────
+    def _build_log_context_menu(self):
+        c = self.colors
+        self._log_ctx_menu = tk.Menu(self, tearoff=0,
+                                     bg=c["hdr"], fg=c["fg"],
+                                     activebackground=c["sel"],
+                                     activeforeground=c["accent"],
+                                     font=("Georgia", 9))
+        self._log_ctx_menu.add_command(label="✏  Edit Entry...",
+                                       command=self._ctx_edit_log_entry)
+        self._log_ctx_menu.add_separator()
+        self._log_ctx_menu.add_command(label="✖  Delete Entry",
+                                       command=self._ctx_delete_log_entry)
+
+    def _on_log_right_click(self, event):
+        iid = self.log_tree.identify_row(event.y)
+        if not iid:
+            return
+        self.log_tree.selection_set(iid)
+        try:
+            self._log_ctx_menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            self._log_ctx_menu.grab_release()
+
+    def _ctx_edit_log_entry(self):
+        sel = self.log_tree.selection()
+        if not sel:
+            return
+        row_id = int(sel[0])
+
+        con = sqlite3.connect(DB_PATH)
+        row = con.execute(
+            "SELECT shop_name,item_name,rarity,quantity,price,session_tag,action "
+            "FROM transactions WHERE id=?", (row_id,)
+        ).fetchone()
+        con.close()
+        if not row:
+            return
+
+        shop, item_name, _, qty, price, session, action = row
+        c = self.colors
+
+        dlg = tk.Toplevel(self)
+        dlg.title("Edit Transaction")
+        dlg.geometry("380x340")
+        dlg.configure(bg=c["hdr"])
+        dlg.resizable(False, False)
+        dlg.grab_set()
+
+        tk.Label(dlg, text="Edit Transaction Entry",
+                 bg=c["hdr"], fg=c["accent"],
+                 font=("Georgia", 11, "bold")).pack(padx=16, pady=(14, 10))
+
+        fields_f = tk.Frame(dlg, bg=c["hdr"])
+        fields_f.pack(fill="x", padx=16)
+        fields_f.columnconfigure(1, weight=1)
+
+        item_var    = tk.StringVar(value=item_name or "")
+        shop_var    = tk.StringVar(value=shop or "")
+        qty_var     = tk.IntVar(value=qty or 1)
+        price_var   = tk.StringVar(value=price or "")
+        session_var = tk.StringVar(value=session or "")
+        action_var  = tk.StringVar(value=action or "sold")
+
+        def _row(r, label, widget_fn):
+            tk.Label(fields_f, text=label, bg=c["hdr"], fg=c["fg"],
+                     font=("Georgia", 9), anchor="w", width=11
+                     ).grid(row=r, column=0, sticky="w", pady=5)
+            w = widget_fn(fields_f)
+            w.grid(row=r, column=1, sticky="ew", pady=5, padx=(8, 0))
+
+        _row(0, "Item Name:", lambda p: tk.Entry(p, textvariable=item_var,
+             bg=c["sel"], fg=c["fg"], insertbackground=c["fg"],
+             relief="flat", font=("Georgia", 9)))
+        _row(1, "Shop:",      lambda p: tk.Entry(p, textvariable=shop_var,
+             bg=c["sel"], fg=c["fg"], insertbackground=c["fg"],
+             relief="flat", font=("Georgia", 9)))
+        _row(2, "Quantity:",  lambda p: tk.Spinbox(p, from_=1, to=9999,
+             textvariable=qty_var, bg=c["sel"], fg=c["fg"],
+             buttonbackground=c["sel"], relief="flat", font=("Georgia", 9)))
+        _row(3, "Price:",     lambda p: tk.Entry(p, textvariable=price_var,
+             bg=c["sel"], fg=c["fg"], insertbackground=c["fg"],
+             relief="flat", font=("Georgia", 9)))
+        _row(4, "Session:",   lambda p: tk.Entry(p, textvariable=session_var,
+             bg=c["sel"], fg=c["fg"], insertbackground=c["fg"],
+             relief="flat", font=("Georgia", 9)))
+        _row(5, "Action:",    lambda p: ttk.Combobox(p, textvariable=action_var,
+             values=["sold", "bought", "player_sold", "refunded", "other"],
+             state="readonly", font=("Georgia", 9)))
+
+        def _save():
+            con2 = sqlite3.connect(DB_PATH)
+            con2.execute(
+                "UPDATE transactions SET item_name=?,shop_name=?,quantity=?,"
+                "price=?,session_tag=?,action=? WHERE id=?",
+                (item_var.get().strip(), shop_var.get().strip(), qty_var.get(),
+                 price_var.get().strip(), session_var.get().strip(),
+                 action_var.get(), row_id))
+            con2.commit()
+            con2.close()
+            dlg.destroy()
+            self._refresh_log()
+
+        btn_row = tk.Frame(dlg, bg=c["hdr"])
+        btn_row.pack(fill="x", padx=16, pady=(14, 0))
+        ttk.Button(btn_row, text="✔ Save",  command=_save).pack(side="right")
+        ttk.Button(btn_row, text="Cancel", command=dlg.destroy).pack(side="right", padx=(0, 6))
+
+    def _ctx_delete_log_entry(self):
+        sel = self.log_tree.selection()
+        if not sel:
+            return
+        row_id = int(sel[0])
+        if not messagebox.askyesno("Delete Entry", "Delete this transaction entry? This cannot be undone."):
+            return
+        con = sqlite3.connect(DB_PATH)
+        con.execute("DELETE FROM transactions WHERE id=?", (row_id,))
+        con.commit()
+        con.close()
+        self._refresh_log()
 
     def _on_tab_changed(self, event=None):
         if event is None:
@@ -3343,7 +3695,7 @@ class ShopApp(tk.Tk):
 
         con = sqlite3.connect(DB_PATH)
         cur = con.cursor()
-        q      = ("SELECT timestamp,shop_name,item_name,rarity,quantity,"
+        q      = ("SELECT id,timestamp,shop_name,item_name,rarity,quantity,"
                   "price,session_tag,action FROM transactions")
         params: list = []
         clauses: list[str] = []
@@ -3359,11 +3711,11 @@ class ShopApp(tk.Tk):
 
         self.log_tree.delete(*self.log_tree.get_children())
         for idx, row in enumerate(rows):
-            ts, shop, item, rarity, qty, price, session, action = row
+            row_id, ts, shop, item, rarity, qty, price, session, action = row
             r_tag  = normalize_rarity(rarity or "").replace(" ", "_")
             parity = "odd" if idx % 2 == 0 else "even"
             tags   = (parity,) + ((r_tag,) if r_tag else ())
-            self.log_tree.insert("", "end",
+            self.log_tree.insert("", "end", iid=str(row_id),
                 values=(ts, shop, item, rarity, qty, price, session, action),
                 tags=tags)
 
@@ -3565,7 +3917,7 @@ class ShopApp(tk.Tk):
         self.active_tag_filters.clear()
         self.excluded_tag_filters.clear()
         c = self.colors
-        for tag, var in self._tag_state_vars.items():
+        for var in self._tag_state_vars.values():
             var.set(0)
         # Repaint all buttons back to neutral — walk every tag section body
         self._repaint_all_tag_buttons()
@@ -3689,7 +4041,7 @@ class ShopApp(tk.Tk):
         left.pack(side="left", fill="both", expand=True, padx=8, pady=8)
 
         tk.Label(left, text="Saved Campaigns",
-                 font=("Georgia", 11, "bold"),
+                 font=("Georgia", 14, "bold"),
                  bg=c["bg"], fg=c["accent"]).pack(anchor="w")
 
         tree_f = ttk.Frame(left)
@@ -3728,6 +4080,8 @@ class ShopApp(tk.Tk):
 
         self.save_campaign_var = tk.StringVar()
         self.save_town_var     = tk.StringVar()
+        self.save_campaign_var.trace_add("write", lambda *_: self._autosave_draft())
+        self.save_town_var.trace_add(    "write", lambda *_: self._autosave_draft())
 
         for label, var in [("Campaign Name:", self.save_campaign_var),
                             ("Town/Location:", self.save_town_var)]:
@@ -3758,6 +4112,7 @@ class ShopApp(tk.Tk):
         self.shop_notes_widget.configure(yscrollcommand=notes_vsb.set)
         notes_vsb.pack(side="right", fill="y")
         self.shop_notes_widget.pack(side="left", fill="both", expand=True)
+        self.shop_notes_widget.bind("<<Modified>>", self._on_notes_modified)
 
         ttk.Separator(right, orient="horizontal").pack(fill="x", pady=(0, 8))
 
@@ -3848,6 +4203,7 @@ class ShopApp(tk.Tk):
         except Exception:
             pass
         self.status_var.set(f"↻  Rerolled '{item['name']}' → '{new_item['name']}'")
+        self._autosave_draft()
 
     def _run_generate(self):
         shop_type = self.current_shop_type.get()
@@ -3873,6 +4229,7 @@ class ShopApp(tk.Tk):
             f"✔  Generated {len(self.current_items)} items for {shop_type}  "
             f"({self.city_size_var.get()} / {self.wealth_var.get()})"
         )
+        self._autosave_draft()
 
     def _reroll(self):
         if not self.current_items:
@@ -3899,6 +4256,7 @@ class ShopApp(tk.Tk):
         self.status_var.set(
             f"↻  Rerolled ~{int(pct*100)}% of unlocked items ({n_reroll} swapped)"
         )
+        self._autosave_draft()
 
     def _clear(self):
         if messagebox.askyesno("Clear Shop", "Clear all items?"):
@@ -3906,6 +4264,7 @@ class ShopApp(tk.Tk):
             self._populate_table([])
             self._clear_inspect()
             self.status_var.set("Shop cleared.")
+            self._autosave_draft()
 
     def _random_name(self):
         self.shop_name_var.set(generate_shop_name(self.current_shop_type.get()))
@@ -3934,6 +4293,7 @@ class ShopApp(tk.Tk):
                 item["locked"] = not item.get("locked", False)
                 break
         self._populate_table(self.current_items)
+        self._autosave_draft()
 
     # ── Tab Visibility ────────────────────────────────────────────────────────
     def _apply_tab_visibility(self):
@@ -3982,6 +4342,7 @@ class ShopApp(tk.Tk):
                 item["locked"] = not item.get("locked", False)
                 break
         self._populate_table(self.current_items)
+        self._autosave_draft()
 
     # ── Right-click Context Menu ───────────────────────────────────────────────
     def _build_tree_context_menu(self):
@@ -4022,6 +4383,7 @@ class ShopApp(tk.Tk):
                 item["locked"] = not item.get("locked", False)
                 break
         self._populate_table(self.current_items)
+        self._autosave_draft()
 
     # ── Mark as Sold ──────────────────────────────────────────────────────────
     def _ctx_mark_as_sold(self):
@@ -4035,7 +4397,7 @@ class ShopApp(tk.Tk):
 
         dlg = tk.Toplevel(self)
         dlg.title("Mark as Sold")
-        dlg.geometry("320x175")
+        dlg.geometry("340x270")
         dlg.configure(bg=c["hdr"])
         dlg.resizable(False, False)
         dlg.grab_set()
@@ -4043,11 +4405,11 @@ class ShopApp(tk.Tk):
         tk.Label(dlg, text=f"Selling:  {item['name']}",
                  bg=c["hdr"], fg=c["accent"],
                  font=("Georgia", 10, "bold"),
-                 wraplength=290).pack(padx=16, pady=(14, 4))
+                 wraplength=300).pack(padx=16, pady=(14, 4))
 
         tk.Label(dlg, text=f"Session: {session_tag}",
                  bg=c["hdr"], fg=c["fg"],
-                 font=("Georgia", 9, "italic")).pack(anchor="w", padx=16, pady=(0, 6))
+                 font=("Georgia", 9, "italic")).pack(anchor="w", padx=16, pady=(0, 8))
 
         tk.Label(dlg, text="Quantity sold:", bg=c["hdr"], fg=c["fg"],
                  font=("Georgia", 9)).pack(anchor="w", padx=16)
@@ -4059,19 +4421,29 @@ class ShopApp(tk.Tk):
         tk.Spinbox(dlg, from_=1, to=max(max_qty, 1), textvariable=qty_var,
                    width=8, bg=c["sel"], fg=c["fg"],
                    buttonbackground=c["sel"], relief="flat",
-                   font=("Georgia", 9)).pack(anchor="w", padx=16, pady=(2, 12))
+                   font=("Georgia", 9)).pack(anchor="w", padx=16, pady=(2, 10))
+
+        default_price = apply_price_mod(item.get("cost_given", ""), self.price_modifier.get())
+        tk.Label(dlg, text=f"Price sold for  (default: {default_price or '—'}):",
+                 bg=c["hdr"], fg=c["fg"],
+                 font=("Georgia", 9)).pack(anchor="w", padx=16)
+        price_var = tk.StringVar(value=default_price or "")
+        tk.Entry(dlg, textvariable=price_var, width=20,
+                 bg=c["sel"], fg=c["fg"], insertbackground=c["fg"],
+                 relief="flat", font=("Georgia", 9)).pack(anchor="w", padx=16, pady=(2, 14))
 
         def _confirm():
-            qty_sold = qty_var.get()
+            qty_sold       = qty_var.get()
+            price_override = price_var.get().strip()
             dlg.destroy()
-            self._record_sale(item, qty_sold, session_tag)
+            self._record_sale(item, qty_sold, session_tag, price_override=price_override)
 
         btn_row = tk.Frame(dlg, bg=c["hdr"])
         btn_row.pack(fill="x", padx=16)
         ttk.Button(btn_row, text="✔ Confirm", command=_confirm).pack(side="right")
         ttk.Button(btn_row, text="Cancel",    command=dlg.destroy).pack(side="right", padx=(0, 6))
 
-    def _record_sale(self, item: dict, qty_sold: int, session: str):
+    def _record_sale(self, item: dict, qty_sold: int, session: str, price_override: str = ""):
         shop_name = self.shop_name_var.get().strip() or "Unknown Shop"
 
         try:
@@ -4082,7 +4454,7 @@ class ShopApp(tk.Tk):
         qty_sold = min(qty_sold, current_qty)
         new_qty  = current_qty - qty_sold
 
-        price = apply_price_mod(item.get("cost_given", ""), self.price_modifier.get())
+        price = price_override if price_override else apply_price_mod(item.get("cost_given", ""), self.price_modifier.get())
 
         con = sqlite3.connect(DB_PATH)
         con.execute(
@@ -4114,6 +4486,7 @@ class ShopApp(tk.Tk):
 
         if hasattr(self, "log_tree"):
             self._refresh_log()
+        self._autosave_draft()
 
     # ── Save / Load ───────────────────────────────────────────────────────────
     def _save_shop(self):
@@ -4185,6 +4558,287 @@ class ShopApp(tk.Tk):
             con.rollback()
             messagebox.showerror("Save Failed", f"Could not save shop:\n{e}")
             self.save_status_var.set("⚠ Save failed — no changes written.")
+        finally:
+            con.close()
+
+    # ── Draft auto-save ────────────────────────────────────────────────────────
+    def _autosave_draft(self):
+        """Persist full window state to preferences as a draft JSON blob."""
+        try:
+            state = {
+                "shop_name":              self.shop_name_var.get(),
+                "shop_type":              self.current_shop_type.get(),
+                "city_size":              self.city_size_var.get(),
+                "wealth":                 self.wealth_var.get(),
+                "price_modifier":         self.price_modifier.get(),
+                "culture":                self.culture_var.get(),
+                "shopkeeper_name":        self.shopkeeper_name_var.get(),
+                "shopkeeper_race":        self.shopkeeper_race_var.get(),
+                "shopkeeper_personality": self.shopkeeper_personality_var.get(),
+                "shopkeeper_appearance":  self.shopkeeper_appearance_var.get(),
+                "notes": (self.shop_notes_widget.get("1.0", "end").strip()
+                          if self.shop_notes_widget else ""),
+                "save_campaign": (self.save_campaign_var.get()
+                                  if hasattr(self, "save_campaign_var") else ""),
+                "save_town":     (self.save_town_var.get()
+                                  if hasattr(self, "save_town_var") else ""),
+                "items": self.current_items,
+            }
+            con = sqlite3.connect(DB_PATH)
+            con.execute(
+                "INSERT OR REPLACE INTO preferences (key, value) VALUES (?, ?)",
+                ("draft_state", json.dumps(state)))
+            con.commit()
+            con.close()
+        except Exception:
+            pass
+
+    def _clear_draft(self):
+        """Remove the draft state from preferences."""
+        try:
+            con = sqlite3.connect(DB_PATH)
+            con.execute("DELETE FROM preferences WHERE key='draft_state'")
+            con.commit()
+            con.close()
+        except Exception:
+            pass
+
+    def _on_notes_modified(self, event=None):
+        """Called when the shop notes Text widget content changes."""
+        if self.shop_notes_widget:
+            self.shop_notes_widget.edit_modified(False)
+        self._autosave_draft()
+
+    def _show_draft_prompt(self):
+        """Show the startup restore dialog if a meaningful draft exists."""
+        try:
+            con = sqlite3.connect(DB_PATH)
+            row = con.execute(
+                "SELECT value FROM preferences WHERE key='draft_state'"
+            ).fetchone()
+            con.close()
+        except Exception:
+            return
+        if not row:
+            return
+        try:
+            state = json.loads(row[0])
+        except (json.JSONDecodeError, TypeError):
+            return
+
+        items      = state.get("items", [])
+        sk_name    = state.get("shopkeeper_name", "").strip()
+        sk_race    = state.get("shopkeeper_race", "").strip()
+        sk_pers    = state.get("shopkeeper_personality", "").strip()
+        sk_app     = state.get("shopkeeper_appearance", "").strip()
+        meaningful = bool(items) or any([sk_name, sk_race, sk_pers, sk_app])
+        if not meaningful:
+            return
+
+        shop_name  = state.get("shop_name", "").strip() or "Unnamed Shop"
+        shop_type  = state.get("shop_type", "")
+        item_count = len(items)
+        c          = self.colors
+
+        name_line = f'"{shop_name}"'
+        if shop_type:
+            name_line += f"  ·  {shop_type} Shop"
+        item_part = (f"{item_count} item{'s' if item_count != 1 else ''}"
+                     if item_count else "No items generated")
+        summary   = f"{item_part}  ·  Shopkeeper: {sk_name}" if sk_name else item_part
+
+        dlg = tk.Toplevel(self)
+        dlg.title("Welcome Back")
+        dlg.configure(bg=c["hdr"])
+        dlg.resizable(False, False)
+        dlg.grab_set()
+
+        self.update_idletasks()
+        w, h = 420, 265
+        x = self.winfo_x() + (self.winfo_width()  - w) // 2
+        y = self.winfo_y() + (self.winfo_height() - h) // 2
+        dlg.geometry(f"{w}x{h}+{x}+{y}")
+
+        tk.Label(dlg, text="Welcome back to Shopwright",
+                 bg=c["hdr"], fg=c["accent"],
+                 font=("Georgia", 13, "bold")).pack(pady=(20, 6), padx=24, anchor="w")
+        tk.Label(dlg, text="You have an unsaved shop from your last session:",
+                 bg=c["hdr"], fg=c["fg"],
+                 font=("Georgia", 9)).pack(anchor="w", padx=24)
+        tk.Label(dlg, text=name_line,
+                 bg=c["hdr"], fg=c["accent"],
+                 font=("Georgia", 10, "bold")).pack(anchor="w", padx=24, pady=(4, 0))
+        tk.Label(dlg, text=summary,
+                 bg=c["hdr"], fg=c["fg"],
+                 font=("Georgia", 9, "italic")).pack(anchor="w", padx=24, pady=(0, 14))
+
+        btn_frame  = tk.Frame(dlg, bg=c["hdr"])
+        btn_frame.pack(fill="x", padx=24)
+        save_frame = tk.Frame(dlg, bg=c["hdr"])
+
+        def _show_save_form():
+            btn_frame.pack_forget()
+            dlg.geometry(f"{w}x390+{x}+{y}")
+            save_frame.pack(fill="x", padx=24, pady=(0, 12))
+
+            tk.Label(save_frame, text="Campaign Name:", bg=c["hdr"], fg=c["fg"],
+                     font=("Georgia", 9)).pack(anchor="w")
+            camp_var = tk.StringVar(value=state.get("save_campaign", ""))
+            tk.Entry(save_frame, textvariable=camp_var, width=36,
+                     bg=c["sel"], fg=c["fg"], insertbackground=c["fg"],
+                     relief="flat", font=("Georgia", 9)).pack(anchor="w", pady=(0, 6))
+
+            tk.Label(save_frame, text="Town/Location:", bg=c["hdr"], fg=c["fg"],
+                     font=("Georgia", 9)).pack(anchor="w")
+            town_var = tk.StringVar(value=state.get("save_town", ""))
+            tk.Entry(save_frame, textvariable=town_var, width=36,
+                     bg=c["sel"], fg=c["fg"], insertbackground=c["fg"],
+                     relief="flat", font=("Georgia", 9)).pack(anchor="w", pady=(0, 10))
+
+            err_lbl = tk.Label(save_frame, text="", bg=c["hdr"], fg="#cc4444",
+                               font=("Georgia", 8, "italic"))
+            err_lbl.pack(anchor="w")
+
+            row = tk.Frame(save_frame, bg=c["hdr"])
+            row.pack(fill="x")
+
+            def _do_save():
+                camp = camp_var.get().strip()
+                town = town_var.get().strip()
+                if not camp:
+                    err_lbl.config(text="Campaign name required."); return
+                if not town:
+                    err_lbl.config(text="Town name required."); return
+                if not state.get("items"):
+                    err_lbl.config(text="No items to save."); return
+                if self._save_shop_from_state(state, camp, town):
+                    self._clear_draft()
+                    dlg.destroy()
+
+            def _cancel_save():
+                save_frame.pack_forget()
+                dlg.geometry(f"{w}x{h}+{x}+{y}")
+                btn_frame.pack(fill="x", padx=24)
+
+            ttk.Button(row, text="✔ Save",  command=_do_save).pack(side="right")
+            ttk.Button(row, text="Cancel", command=_cancel_save).pack(side="right", padx=(0, 6))
+
+        def _continue():
+            self._restore_from_draft(state)
+            dlg.destroy()
+
+        def _discard():
+            self._clear_draft()
+            dlg.destroy()
+
+        ttk.Button(btn_frame, text="💾  Save & Start Fresh",
+                   command=_show_save_form).pack(fill="x", pady=(0, 4))
+        ttk.Button(btn_frame, text="▶  Continue Where I Left Off",
+                   command=_continue).pack(fill="x", pady=(0, 4))
+        ttk.Button(btn_frame, text="✖  Discard & Start Fresh",
+                   command=_discard).pack(fill="x")
+
+    def _restore_from_draft(self, state: dict):
+        """Load a draft state dict into the active window."""
+        self.shop_name_var.set(state.get("shop_name", ""))
+        shop_type = state.get("shop_type", "Magic")
+        self.current_shop_type.set(shop_type)
+        city_size = state.get("city_size", "Town")
+        if city_size in CITY_SIZE_RANGES:
+            self.city_size_var.set(city_size)
+        wealth = state.get("wealth", "Average")
+        if wealth in WEALTH_DEFAULTS:
+            self.wealth_var.set(wealth)
+            self._on_wealth_change()
+        try:
+            self.price_modifier.set(int(state.get("price_modifier", 100)))
+        except (ValueError, TypeError):
+            pass
+        self.culture_var.set(state.get("culture", ""))
+        self.shopkeeper_name_var.set(state.get("shopkeeper_name", ""))
+        self.shopkeeper_race_var.set(state.get("shopkeeper_race", ""))
+        self.shopkeeper_personality_var.set(state.get("shopkeeper_personality", ""))
+        self.shopkeeper_appearance_var.set(state.get("shopkeeper_appearance", ""))
+        if self.shop_notes_widget:
+            self.shop_notes_widget.delete("1.0", "end")
+            self.shop_notes_widget.insert("1.0", state.get("notes", ""))
+        if hasattr(self, "save_campaign_var"):
+            self.save_campaign_var.set(state.get("save_campaign", ""))
+        if hasattr(self, "save_town_var"):
+            self.save_town_var.set(state.get("save_town", ""))
+        self.current_items = state.get("items", [])
+        for item in self.current_items:
+            item["locked"] = bool(item.get("locked", False))
+        self._populate_table(self.current_items)
+        self._refresh_shop_info()
+        self.status_var.set(
+            f"Restored: '{state.get('shop_name', '') or 'Unnamed Shop'}' "
+            f"({len(self.current_items)} items)"
+        )
+        self._autosave_draft()
+
+    def _save_shop_from_state(self, state: dict, campaign: str, town: str) -> bool:
+        """Write a draft state dict directly to the DB. Returns True on success."""
+        shop_name = (state.get("shop_name") or "").strip() or \
+                    f"{state.get('shop_type', 'Unknown')} Shop"
+        notes = state.get("notes", "")
+        items = state.get("items", [])
+
+        con = sqlite3.connect(DB_PATH)
+        con.execute("PRAGMA foreign_keys = ON")
+        try:
+            cur = con.cursor()
+            cur.execute("INSERT OR IGNORE INTO campaigns (name) VALUES (?)", (campaign,))
+            cur.execute("SELECT id FROM campaigns WHERE name=?", (campaign,))
+            camp_id = cur.fetchone()[0]
+
+            existing_town = cur.execute(
+                "SELECT id FROM towns WHERE campaign_id=? AND name=?",
+                (camp_id, town)).fetchone()
+            if existing_town:
+                town_id = existing_town[0]
+                cur.execute("UPDATE towns SET city_size=? WHERE id=?",
+                            (state.get("city_size", ""), town_id))
+            else:
+                cur.execute(
+                    "INSERT INTO towns (campaign_id, name, city_size) VALUES (?,?,?)",
+                    (camp_id, town, state.get("city_size", "")))
+                town_id = cur.lastrowid
+
+            cur.execute(
+                "INSERT INTO shops (town_id, name, shop_type, wealth, last_restocked, notes, "
+                "shopkeeper_name, shopkeeper_race, shopkeeper_personality, shopkeeper_appearance) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?)",
+                (town_id, shop_name, state.get("shop_type", ""),
+                 state.get("wealth", ""), datetime.now().isoformat(), notes,
+                 state.get("shopkeeper_name", ""), state.get("shopkeeper_race", ""),
+                 state.get("shopkeeper_personality", ""), state.get("shopkeeper_appearance", "")))
+            shop_id = cur.lastrowid
+
+            for item in items:
+                cur.execute("""INSERT INTO shop_items
+                    (shop_id,item_id,name,rarity,item_type,source,page,
+                     cost_given,quantity,locked,
+                     attunement,damage,properties,mastery,weight,tags,description,table_data,
+                     sane_cost,market_price)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    (shop_id, item.get("item_id", ""), item.get("name", ""),
+                     item.get("rarity", ""), item.get("item_type", ""),
+                     item.get("source", ""), item.get("page", ""),
+                     item.get("cost_given", ""), item.get("quantity", "1"),
+                     int(bool(item.get("locked", False))),
+                     item.get("attunement", ""), item.get("damage", ""),
+                     item.get("properties", ""), item.get("mastery", ""),
+                     item.get("weight", ""), item.get("tags", ""),
+                     item.get("description", ""), item.get("table_data", ""),
+                     item.get("sane_cost", ""), item.get("market_price", "")))
+            con.commit()
+            self._refresh_campaign_list()
+            return True
+        except Exception as e:
+            con.rollback()
+            messagebox.showerror("Save Failed", f"Could not save shop:\n{e}")
+            return False
         finally:
             con.close()
 
@@ -4278,6 +4932,7 @@ class ShopApp(tk.Tk):
         self.status_var.set(
             f"Loaded '{shop_name}' ({len(self.current_items)} items)"
         )
+        self._autosave_draft()
 
     def _delete_selected(self):
         sel = self.save_tree.selection()
@@ -4390,6 +5045,7 @@ class ShopApp(tk.Tk):
         self.status_var.set(
             f"Imported {len(self.current_items)} items from JSON."
         )
+        self._autosave_draft()
 
 
     # ══════════════════════════════════════════════════════════════════════════
@@ -4409,8 +5065,8 @@ class ShopApp(tk.Tk):
         bar = tk.Frame(left, bg=c["hdr"], pady=6)
         bar.pack(fill="x")
 
-        tk.Label(bar, text="◉  Item Gallery",
-                 font=("Georgia", 13, "bold"),
+        tk.Label(bar, text="Item Gallery",
+                 font=("Georgia", 14, "bold"),
                  bg=c["hdr"], fg=c["accent"]).pack(side="left", padx=(10, 16))
 
         tk.Label(bar, text="⌕", bg=c["hdr"], fg=c["fg"]).pack(side="left")
