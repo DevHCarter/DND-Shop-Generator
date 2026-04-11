@@ -1,0 +1,7 @@
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Runtime data (DB, font — generated or loaded at runtime)
+data/
