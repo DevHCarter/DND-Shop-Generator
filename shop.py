@@ -3440,8 +3440,9 @@ class ShopApp(tk.Tk):
 
             # Shop Mode
             self.mundane_only_var.set(_mundane_var.get())
-            self.exclude_homebrew_var.set(_homebrew_var.get())
+            self.exclude_homebrew_var.set(not _homebrew_var.get())
             self._on_mundane_only_toggle()
+            self._save_prefs()
 
             # Table Display
             self.show_qty_col.set(_qty_var.get())
