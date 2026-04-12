@@ -4018,6 +4018,21 @@ class ShopApp(tk.Tk):
         color = self.colors["accent"] if total == 100 else "#ff4444"
         self.total_pct_var.set(f"Total: {total}%")
 
+    def _on_entry(self, rarity: str):
+        """Handle manual value typed into a rarity entry box.
+        Parses the entry, clamps to [0, 100], then delegates to _on_slider
+        so the same rebalancing logic applies."""
+        raw = self.slider_labels[rarity].get().replace("%", "").strip()
+        try:
+            val = max(0, min(100, int(raw)))
+        except ValueError:
+            # Reset to current slider value on bad input
+            self.slider_labels[rarity].set(
+                f"{self.rarity_sliders[rarity].get():>3}%")
+            return
+        self.rarity_sliders[rarity].set(val)
+        self._on_slider(rarity, str(val))
+
     def _on_wealth_change(self):
         wealth   = self.wealth_var.get()
         defaults = WEALTH_DEFAULTS.get(wealth, {})
