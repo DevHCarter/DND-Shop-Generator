@@ -2666,9 +2666,15 @@ class ShopApp(tk.Tk):
                       command=lambda v, r=rarity: self._on_slider(r, v)
                       ).pack(side="left", padx=8)
 
-            tk.Label(row, textvariable=lbl_var, width=5,
-                     bg=c["bg"], fg=color,
-                     font=("Consolas", 10)).pack(side="left")
+            entry = tk.Entry(row, textvariable=lbl_var, width=4,
+                             bg=c["bg"], fg=color,
+                             font=("Consolas", 10),
+                             relief="flat", bd=1,
+                             justify="right",
+                             insertbackground=color)
+            entry.pack(side="left")
+            entry.bind("<Return>",   lambda e, r=rarity: self._on_entry(r))
+            entry.bind("<FocusOut>", lambda e, r=rarity: self._on_entry(r))
 
         self.total_pct_var = tk.StringVar(value="Total: 100%")
         self.total_pct_label = tk.Label(right_col, textvariable=self.total_pct_var,
