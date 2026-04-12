@@ -4024,13 +4024,12 @@ class ShopApp(tk.Tk):
         so the same rebalancing logic applies."""
         raw = self.slider_labels[rarity].get().replace("%", "").strip()
         try:
-            val = max(0, min(100, int(raw)))
+            val = max(0, min(100, int(float(raw))))
         except ValueError:
             # Reset to current slider value on bad input
             self.slider_labels[rarity].set(
                 f"{self.rarity_sliders[rarity].get():>3}%")
             return
-        self.rarity_sliders[rarity].set(val)
         self._on_slider(rarity, str(val))
 
     def _on_wealth_change(self):
